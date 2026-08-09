@@ -509,8 +509,8 @@ async function main(): Promise<void> {
     .argument('[prompt...]', 'Prompt for single-shot mode; omit for interactive chat')
     .option(
       '-m, --model <id>',
-      `Model id like openrouter:deepseek/deepseek-r1 (providers: ${Object.keys(PROVIDER_REGISTRY).join(', ')})`,
-      process.env.ALGORITHME_MODEL ?? process.env.PI_MODEL ?? 'openrouter:deepseek/deepseek-r1',
+      `Model id like openrouter:deepseek/deepseek-v4 (providers: ${Object.keys(PROVIDER_REGISTRY).join(', ')})`,
+      process.env.ALGORITHME_MODEL ?? process.env.PI_MODEL ?? 'openrouter:deepseek/deepseek-v4',
     )
     .option('-c, --cwd <dir>', 'Working directory', process.cwd())
     .option('-s, --system <text>', 'Custom system prompt')

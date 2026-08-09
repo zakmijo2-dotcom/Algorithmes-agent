@@ -78,4 +78,4 @@ export function createProvider(id: string, apiKey?: string): BaseProvider {
 
 export { BaseProvider };
 export { PROVIDERS };
-export const DEFAULT_MODEL = 'openrouter:deepseek/deepseek-r1';
+export const DEFAULT_MODEL = 'openrouter:deepseek/deepseek-v4';
