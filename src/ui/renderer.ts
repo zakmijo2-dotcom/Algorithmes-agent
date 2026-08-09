@@ -1,5 +1,4 @@
-import chalk from 'chalk';
-import { formatTokens, joinLeftRight, truncate } from './format.js';
+import { formatTokens, joinLeftRight, truncate, THEME } from './format.js';
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -77,12 +76,15 @@ export class Tui {
   // -------------------------------------------------------------------------
 
   private buildFooter(): string {
-    const left = `${chalk.cyan('◈')} ${chalk.bold(this.model)} ${chalk.dim('·')} ${truncate(this.cwd, 36)}`;
-    const tokens = `in ${formatTokens(this.usage.input)} → out ${formatTokens(this.usage.output)}`;
+    const modelParts = this.model.split(':');
+    const provider = modelParts[0] ? THEME.primary(`[${modelParts[0]}]`) : '';
+    const modelName = modelParts[1] ?? this.model;
+    const left = `${THEME.accent('◈')} ${THEME.bold(modelName)} ${THEME.secondary(provider)} ${THEME.secondary('·')} ${THEME.secondary(truncate(this.cwd, 36))}`;
+    const tokens = `${THEME.secondary('in')} ${THEME.accent(formatTokens(this.usage.input))} ${THEME.secondary('→')} ${THEME.secondary('out')} ${THEME.accent(formatTokens(this.usage.output))}`;
     const status = this.statusText
-      ? `  ${chalk.cyan(SPINNER_FRAMES[this.frame % SPINNER_FRAMES.length])} ${this.statusText}`
+      ? `  ${THEME.secondary(SPINNER_FRAMES[this.frame % SPINNER_FRAMES.length])} ${THEME.warning(this.statusText)}`
       : '';
-    const right = `${chalk.dim(tokens)}${status}`;
+    const right = `${tokens}${status}`;
     return joinLeftRight(left, right, this.cols - 1);
   }
 
@@ -102,7 +104,7 @@ export class Tui {
     this.statusText = label;
     this.frame = 0;
     if (!this.enabled) {
-      this.emitLine(chalk.dim(`  ⏳ ${label}…`));
+      this.emitLine(THEME.secondary(`  ⏳ ${label}…`));
       return;
     }
     if (!this.spinner) {
@@ -159,7 +161,7 @@ export class Tui {
     this.stopSpinner();
     this.endStreaming();
     this.toolStartTimes.set(name, Date.now());
-    this.emitLine(`  ${chalk.cyan('⚡')} ${chalk.bold(name)}(${chalk.dim(args)})`);
+    this.emitLine(`  ${THEME.accent('⚡')} ${THEME.bold(name)}(${THEME.secondary(args)})`);
     this.startSpinner(name);
   }
 
@@ -167,10 +169,10 @@ export class Tui {
   onToolEnd(name: string, result: string, isError = false): void {
     this.stopSpinner();
     const started = this.toolStartTimes.get(name);
-    const took = started !== undefined ? ` ${chalk.dim(`(${((Date.now() - started) / 1000).toFixed(1)}s)`)}` : '';
+    const took = started !== undefined ? ` ${THEME.secondary(`(${((Date.now() - started) / 1000).toFixed(1)}s)`)}` : '';
     this.toolStartTimes.delete(name);
-    const icon = isError ? chalk.red('✗') : chalk.green('✓');
-    const line = `  ${icon} ${chalk.bold(name)} → ${isError ? chalk.red(truncate(result, 140)) : chalk.dim(truncate(result, 140))}${took}`;
+    const icon = isError ? THEME.error('✗') : THEME.success('✓');
+    const line = `  ${icon} ${THEME.bold(name)} ${THEME.secondary('→')} ${isError ? THEME.error(truncate(result, 140)) : THEME.secondary(truncate(result, 140))}${took}`;
     this.emitLine(line);
   }
 
@@ -191,7 +193,7 @@ export class Tui {
   }
 
   error(text: string): void {
-    this.emitLine(chalk.red(`  ${text}`));
+    this.emitLine(THEME.error(`  ${text}`));
   }
 
   /** Stop all activity; restore the cursor for the next prompt. */

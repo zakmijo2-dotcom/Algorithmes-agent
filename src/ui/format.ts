@@ -1,5 +1,18 @@
 import chalk from 'chalk';
 
+const THEME = {
+  primary: chalk.cyan,
+  accent: chalk.cyanBright,
+  secondary: chalk.gray,
+  success: chalk.green,
+  error: chalk.red,
+  warning: chalk.yellow,
+  muted: chalk.gray,
+  bold: chalk.bold,
+};
+
+export { THEME };
+
 /** Strip ANSI SGR codes to measure the visible width of a styled string. */
 export function stripAnsi(value: string): string {
   // eslint-disable-next-line no-control-regex
@@ -28,7 +41,7 @@ export function formatTokens(n: number): string {
   return String(n);
 }
 
-export function divider(width: number, char = '─', style = chalk.dim): string {
+export function divider(width: number, char = '─', style = THEME.muted): string {
   return style(char.repeat(Math.max(0, width)));
 }
 
@@ -49,7 +62,7 @@ export interface TableOptions {
   rightAlign?: number;
 }
 
-const BORDER = chalk.dim;
+const BORDER = THEME.secondary;
 
 /**
  * Render an aligned table with box-drawing borders. Widths are computed from
@@ -68,7 +81,7 @@ export function table({ headers, rows, rightAlign }: TableOptions): string {
       .map((cell, c) => {
         const aligned =
           !header && rightAlign === c ? padRight(cell, widths[c]) : pad(cell, widths[c]);
-        return header ? chalk.bold(aligned) : aligned;
+        return header ? THEME.bold(aligned) : aligned;
       })
       .join(BORDER(' │ '));
     return `│ ${inner} │`;
@@ -98,23 +111,27 @@ function padRight(value: string, width: number): string {
   return gap > 0 ? ' '.repeat(gap) + value : value;
 }
 
+/**
+ * Render a cyber-minimalist header box with double-line border accents.
+ * Used for the startup banner and key status overlays.
+ */
 export function headerBox(title: string, subtitle: string, width: number, meta?: string): string {
   const inner = Math.max(1, width - 4);
-  const bar = '─'.repeat(inner);
+  const bar = '━'.repeat(inner);
   const lines = [
-    `${chalk.dim('╭─')}${chalk.dim(bar)}${chalk.dim('─╮')}`,
-    `│ ${pad(chalk.bold(title), inner)} │`,
-    `│ ${pad(chalk.dim(subtitle), inner)} │`,
+    `${THEME.primary('┏━')}${THEME.secondary(bar)}${THEME.secondary('━┓')}`,
+    `┃ ${pad(THEME.bold(THEME.accent(title)), inner)} ┃`,
+    `┃ ${pad(THEME.secondary(subtitle), inner)} ┃`,
   ];
-  if (meta) lines.push(`│ ${pad(chalk.dim(meta), inner)} │`);
-  lines.push(`${chalk.dim('╰─')}${chalk.dim(bar)}${chalk.dim('─╯')}`);
+  if (meta) lines.push(`┃ ${pad(THEME.secondary(meta), inner)} ┃`);
+  lines.push(`${THEME.primary('┗━')}${THEME.secondary(bar)}${THEME.secondary('━┛')}`);
   return lines.join('\n');
 }
 
-export function badge(text: string, color: (s: string) => string = chalk.cyan): string {
+export function badge(text: string, color: (s: string) => string = THEME.primary): string {
   return color(` ${text} `);
 }
 
 export function check(ok: boolean): string {
-  return ok ? chalk.green('✓') : chalk.red('✗');
+  return ok ? THEME.success('✓') : THEME.error('✗');
 }
