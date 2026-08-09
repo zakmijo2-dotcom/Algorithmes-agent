@@ -1,12 +1,27 @@
 {
-  "name": "pi-agent",
-  "version": "0.2.0",
-  "description": "A Pi-architected, minimalist CLI AI coding agent harness",
+  "name": "algorithme-ai-agent",
+  "version": "1.0.0",
+  "description": "Algorithme AI Agent - Deterministic & Secure Multi-Provider Coding Harness",
   "type": "module",
   "license": "MIT",
   "bin": {
-    "pi": "dist/index.js"
+    "algorithme": "dist/index.js",
+    "alg": "dist/index.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zakmijo2-dotcom/Algorithmes-agent.git"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "coding",
+    "llm",
+    "openrouter",
+    "groq",
+    "ollama"
+  ],
   "engines": {
     "node": ">=18.17.0"
   },

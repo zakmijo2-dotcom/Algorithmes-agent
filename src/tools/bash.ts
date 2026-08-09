@@ -9,11 +9,12 @@ const MAX_BUFFER = 10 * 1024 * 1024;
 
 /**
  * Pick the shell binary for the current platform.
- * - `PI_SHELL` env override wins.
+ * - `ALGORITHME_SHELL` env override wins (`PI_SHELL` kept as a legacy fallback).
  * - Termux (Android) keeps bash under `$PREFIX/bin/bash` (e.g. /data/data/com.termux/files/usr).
  * - Otherwise fall back to the login shell, then /bin/bash.
  */
 function detectShell(): string {
+  if (process.env.ALGORITHME_SHELL) return process.env.ALGORITHME_SHELL;
   if (process.env.PI_SHELL) return process.env.PI_SHELL;
   if (process.env.TERMUX_VERSION || process.env.PREFIX) {
     const prefix = process.env.PREFIX ?? '/data/data/com.termux/files/usr';

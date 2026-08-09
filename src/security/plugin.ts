@@ -30,9 +30,9 @@ export interface SecurityPluginOptions {
  */
 export function createSecurityPlugin(opts: SecurityPluginOptions): Plugin {
   return {
-    name: 'pi-security',
+    name: 'algorithme-security',
     version: '1.0.0',
-    description: 'Built-in guardrails: sandbox path checks and shell command protection.',
+    description: 'Built-in Algorithme guardrails: sandbox path checks and shell command protection.',
     hooks: {
       beforeToolCall: async (ctx): Promise<BeforeToolCallResult | void> => {
         const root = ctx.cwd || opts.cwd;

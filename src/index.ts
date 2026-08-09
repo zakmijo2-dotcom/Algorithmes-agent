@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import 'dotenv/config';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -210,7 +211,7 @@ function printStatus(app: App): void {
 
 function printSkills(app: App): void {
   if (app.skills.length === 0) {
-    console.log(chalk.dim('no skills loaded (look in .pi/skills)'));
+    console.log(chalk.dim('no skills loaded (look in .algorithme/skills)'));
     return;
   }
   console.log(table({ headers: ['Skill'], rows: app.skills.map((s) => [s]) }));
@@ -378,7 +379,7 @@ async function ask(): Promise<string> {
   const response = await prompts<'value'>({
     type: 'autocomplete',
     name: 'value',
-    message: 'pi',
+    message: 'Algorithme',
     choices: COMMANDS.map((c) => ({ title: c.cmd, description: c.help })),
     // The raw typed input is always the first suggestion so Enter submits
     // exactly what was typed; command matches are offered as completions.
@@ -406,9 +407,10 @@ async function interactive(app: App): Promise<void> {
   const width = Math.min(process.stdout.columns || 80, 78);
   tui.print([
     headerBox(
-      app.modelId,
-      `${app.cwd} · ${app.skills.length} skill${app.skills.length === 1 ? '' : 's'} · /help for commands`,
+      'Algorithme AI Agent',
+      'Deterministic & Secure Multi-Provider Coding Harness',
       width,
+      `${app.modelId} · ${app.cwd} · ${app.skills.length} skill${app.skills.length === 1 ? '' : 's'} · /help`,
     ),
     '',
   ]);
@@ -446,14 +448,15 @@ async function main(): Promise<void> {
   };
 
   program
-    .name('pi')
+    .name('algorithme')
+    .alias('alg')
     .version(pkg.version)
-    .description('Minimalist Pi-architected CLI AI coding agent')
+    .description('Algorithme AI Agent - Deterministic & Secure Multi-Provider Coding Harness')
     .argument('[prompt...]', 'Prompt for single-shot mode; omit for interactive chat')
     .option(
       '-m, --model <id>',
       `Model id like openrouter:deepseek/deepseek-r1 (providers: ${Object.keys(PROVIDER_REGISTRY).join(', ')})`,
-      process.env.PI_MODEL ?? 'openrouter:deepseek/deepseek-r1',
+      process.env.ALGORITHME_MODEL ?? process.env.PI_MODEL ?? 'openrouter:deepseek/deepseek-r1',
     )
     .option('-c, --cwd <dir>', 'Working directory', process.cwd())
     .option('-s, --system <text>', 'Custom system prompt')
@@ -465,8 +468,8 @@ async function main(): Promise<void> {
     .showHelpAfterError()
     .action(async (promptParts: string[] | undefined, opts) => {
       const cwd = path.resolve(opts.cwd);
-      const defaultSkills = path.join(cwd, '.pi', 'skills');
-      const defaultPlugins = path.join(cwd, '.pi', 'plugins');
+      const defaultSkills = path.join(cwd, '.algorithme', 'skills');
+      const defaultPlugins = path.join(cwd, '.algorithme', 'plugins');
 
       const app = new App({
         model: opts.model,

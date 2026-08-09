@@ -8,7 +8,7 @@ export class OpenRouterProvider extends OpenAICompatibleProvider {
   constructor(model: string, apiKey?: string) {
     const headers: Record<string, string> = {};
     const referer = process.env.OPENROUTER_REFERER;
-    const title = process.env.OPENROUTER_TITLE ?? 'pi-agent';
+    const title = process.env.OPENROUTER_TITLE ?? 'Algorithme AI Agent';
     if (referer) headers['HTTP-Referer'] = referer;
     if (title) headers['X-Title'] = title;
 

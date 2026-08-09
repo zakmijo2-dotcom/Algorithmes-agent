@@ -98,16 +98,17 @@ function padRight(value: string, width: number): string {
   return gap > 0 ? ' '.repeat(gap) + value : value;
 }
 
-export function headerBox(title: string, subtitle: string, width: number): string {
+export function headerBox(title: string, subtitle: string, width: number, meta?: string): string {
   const inner = Math.max(1, width - 4);
   const bar = '─'.repeat(inner);
-  const titleText = chalk.bold(`π ${title}`);
-  return [
+  const lines = [
     `${chalk.dim('╭─')}${chalk.dim(bar)}${chalk.dim('─╮')}`,
-    `│ ${pad(titleText, inner)} │`,
+    `│ ${pad(chalk.bold(title), inner)} │`,
     `│ ${pad(chalk.dim(subtitle), inner)} │`,
-    `${chalk.dim('╰─')}${chalk.dim(bar)}${chalk.dim('─╯')}`,
-  ].join('\n');
+  ];
+  if (meta) lines.push(`│ ${pad(chalk.dim(meta), inner)} │`);
+  lines.push(`${chalk.dim('╰─')}${chalk.dim(bar)}${chalk.dim('─╯')}`);
+  return lines.join('\n');
 }
 
 export function badge(text: string, color: (s: string) => string = chalk.cyan): string {

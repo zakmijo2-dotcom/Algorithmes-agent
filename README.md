@@ -1,13 +1,12 @@
 <div align="center">
 
-# pi-agent
+# Algorithme AI Agent
 
-**A Pi-architected CLI AI coding agent — lightweight, deterministic, extensible.**
+**Deterministic & Secure Multi-Provider Coding Harness**
 
-`pi-agent` is a production-grade terminal agent built on the design principles of the
-[Pi](https://github.com/earendil-works/pi) coding-agent harness: a minimal agent loop,
-zero bloat, deterministic tool calls, and a pluggable multi-provider + skills/plugins
-architecture.
+A production-grade terminal coding agent with a minimal agent loop, zero bloat,
+deterministic tool calls, and a pluggable multi-provider + skills/plugins
+architecture — hardened with a built-in security & guardrails layer.
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D18.17-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
@@ -20,12 +19,13 @@ architecture.
 ## Highlights
 
 - **Deterministic agent loop** — `user input → system prompt + tools → stream → execute tools → append results → repeat`, with tool failures fed back to the model for self-correction.
+- **Secure by default** — sandboxed file access (path traversal + symlink protection), a shell command guard (no `rm -rf /`, `mkfs`, credential dumps, privilege escalation), and automatic secret masking in streams, logs, and history.
 - **Multi-provider, one interface** — a single streaming contract (`BaseProvider.chat`) over **OpenRouter**, **Groq**, and local **Ollama**. Pick any provider + model with one string ID.
 - **Zero-bloat core** — no vendor SDKs. Providers are thin SSE streams over the OpenAI-compatible API using native `fetch`.
-- **Native file tools** — `read`, `write`, `edit`, `bash`, `diff` — auto-registered, cwd-aware, safe by default.
+- **Native file tools** — `read`, `write`, `edit`, `bash`, `diff` — auto-registered, cwd-aware, sandboxed.
 - **Sub-agents** — the model can delegate isolated tasks to nested sub-agents (bounded depth) that run with fresh context and report back.
-- **Skills** — drop JSON/YAML/TS skill packs into `.pi/skills`; every command becomes an agent tool.
-- **Plugins** — lifecycle hooks (`onAgentStart`, `onTurnStart`, `beforeToolCall`, `afterToolCall`, `onCompaction`, `onTurnEnd`) loaded from `.pi/plugins`, with blockable tool calls and result mutation.
+- **Skills** — drop JSON/YAML/TS skill packs into `.algorithme/skills`; every command becomes an agent tool.
+- **Plugins** — lifecycle hooks (`onAgentStart`, `onTurnStart`, `beforeToolCall`, `afterToolCall`, `onCompaction`, `onTurnEnd`) loaded from `.algorithme/plugins`, with blockable tool calls and result mutation.
 - **Session tree** — history is a branching tree, not a flat buffer: fork from any message (`/fork`), list lanes (`/lanes`), switch between branches (`/go`).
 - **Termux ready** — runs natively on Android's Termux; shell detection adapts automatically.
 - **Polished CLI UI** — live token streaming, spinner, tool-call tracing, per-turn timing and token accounting.
@@ -56,8 +56,10 @@ GROQ_API_KEY=gsk_...
 OLLAMA_BASE_URL=http://localhost:11434/v1
 
 # Default model id (optional)
-PI_MODEL=openrouter:deepseek/deepseek-r1
+ALGORITHME_MODEL=openrouter:deepseek/deepseek-r1
 ```
+
+> `PI_MODEL` is still honoured as a legacy fallback for `ALGORITHME_MODEL`.
 
 > No key? Point `OLLAMA_BASE_URL` at a running Ollama instance and use `ollama:llama3`.
 
@@ -70,9 +72,10 @@ npm run dev -- "fix the bug in src/agent/loop.ts"
 # Interactive chat
 npm run dev
 
-# Compiled binary / global install
+# Compiled binary / global install (commands: algorithme / alg)
 npm run build && npm start -- --help
-npm install -g . && pi "explain this repo"
+npm install -g . && algorithme "explain this repo"
+alg --help
 ```
 
 ---
@@ -80,20 +83,20 @@ npm install -g . && pi "explain this repo"
 ## CLI reference
 
 ```
-Usage: pi [options] [prompt...]
+Usage: algorithme [options] [prompt...]
 ```
 
 | Option | Description | Default |
 | --- | --- | --- |
 | `[prompt...]` | Prompt for single-shot mode. Omit for interactive chat. | — |
-| `-m, --model <id>` | Provider + model id, e.g. `groq:llama-3.3-70b-versatile`, `ollama:llama3`. | `$PI_MODEL` or `openrouter:deepseek/deepseek-r1` |
+| `-m, --model <id>` | Provider + model id, e.g. `groq:llama-3.3-70b-versatile`, `ollama:llama3`. | `$ALGORITHME_MODEL` or `openrouter:deepseek/deepseek-r1` |
 | `-c, --cwd <dir>` | Working directory the agent operates in. | `process.cwd()` |
 | `-s, --system <text>` | Override the system prompt. | built-in |
 | `-t, --temperature <n>` | Sampling temperature. | `0.0` |
 | `--max-turns <n>` | Maximum agent-loop turns before forced stop. | `24` |
 | `--max-depth <n>` | Maximum sub-agent nesting depth. | `3` |
-| `--skills <paths...>` | Skill files/directories (comma or space separated). | `.pi/skills` |
-| `--plugins <paths...>` | Plugin directories (comma or space separated). | `.pi/plugins` |
+| `--skills <paths...>` | Skill files/directories (comma or space separated). | `.algorithme/skills` |
+| `--plugins <paths...>` | Plugin directories (comma or space separated). | `.algorithme/plugins` |
 
 ### Interactive commands
 
@@ -112,9 +115,34 @@ Usage: pi [options] [prompt...]
 
 ---
 
+## Security & guardrails
+
+The Algorithme AI Agent ships with a built-in security layer (`src/security/`) bound
+into the agent pipeline as the first plugin (`algorithme-security`), plus direct
+enforcement inside every tool.
+
+- **Path sandboxing** — `read`, `write`, `edit`, `diff`, and `bash --cwd` resolve every
+  path against the working directory and reject traversal (`..`) and symlink escapes.
+  Extra roots can be whitelisted programmatically.
+- **Command guard** — the `bash` tool refuses destructive or leaking commands:
+  `rm -rf` on system paths, `mkfs`, block-device `dd`/redirects, fork bombs,
+  `printenv`/bare `env`, reading `.env`/`.aws`/`.ssh`/`.git-credentials`/`/etc/shadow`,
+  `curl | sh`, and `sudo`/`su`.
+- **Secret masking** — `SecretManager` redacts API keys, tokens, and passwords from
+  streaming deltas, tool results, session history, and compaction summaries before they
+  reach the screen or the provider. Covers env-sourced secrets and common key shapes
+  (`sk-…`, `Bearer …`, `AKIA…`, `ghp_…`, `xox…`, private key headers).
+- **Hardened system prompt** — the default prompt instructs the agent to verify path
+  safety, use tools deterministically, and never expose secrets.
+
+These rules are enforced both by the tools themselves and by the
+`algorithme-security` plugin (defense in depth), so any future tool is covered too.
+
+---
+
 ## Termux (Android)
 
-Run `pi-agent` natively on your Android device with [Termux](https://termux.com/):
+Run the agent natively on your Android device with [Termux](https://termux.com/):
 
 ```bash
 # 1. Install Node.js and build tools
@@ -137,7 +165,7 @@ npm start                      # interactive
 Notes:
 
 - **Shell auto-detection** — the `bash` tool finds your Termux `bash` under `$PREFIX/bin/bash`
-  automatically. Override with `PI_SHELL` if needed.
+  automatically. Override with `ALGORITHME_SHELL` if needed (`PI_SHELL` still works).
 - **Local inference** — install [Ollama for Android](https://ollama.com/download) and run
   models fully offline with `-m ollama:llama3`.
 - **Terminal size** — small screens work best with `--max-turns 12` and terse prompts.
@@ -151,9 +179,9 @@ Notes:
 Model ids follow the `provider:model` pattern. A bare model string defaults to OpenRouter.
 
 ```bash
-pi -m openrouter:deepseek/deepseek-r1 "summarize src/index.ts"
-pi -m groq:llama-3.3-70b-versatile "write tests for src/tools"
-pi -m ollama:llama3 "what files import chalk?"
+algorithme -m openrouter:deepseek/deepseek-r1 "summarize src/index.ts"
+algorithme -m groq:llama-3.3-70b-versatile "write tests for src/tools"
+algorithme -m ollama:llama3 "what files import chalk?"
 ```
 
 | Provider | Env var | Notes |
@@ -168,8 +196,9 @@ pi -m ollama:llama3 "what files import chalk?"
 
 ```
 src/
-├── index.ts              CLI entry — arg parsing, renderer, interactive/single-shot/piped modes
+├── index.ts              CLI entry — arg parsing, banner, renderer, interactive/single-shot/piped modes
 ├── agent/
+│   ├── prompt.ts         default system prompt + security guidelines
 │   ├── loop.ts           deterministic turn loop, parallel tool execution, hook wiring, compaction
 │   ├── session.ts        in-memory session tree: entries, lanes, fork/select, LLM compaction entries
 │   └── subagent.ts       nested sub-agent tool (fresh context, bounded depth)
@@ -185,7 +214,13 @@ src/
 │   ├── write.ts          file writer (creates parent dirs)
 │   ├── edit.ts           exact-string editor — fails on ambiguous matches, optional diff output
 │   ├── diff.ts           line diff between files or against HEAD
-│   └── bash.ts           cwd-aware shell executor (120s timeout, 10MB buffer, Termux-aware)
+│   └── bash.ts           sandboxed cwd-aware shell executor (120s timeout, command guard)
+├── security/
+│   ├── pathguard.ts      sandbox path resolution (lexical + symlink-aware)
+│   ├── commands.ts       destructive / secret-leaking command detection
+│   ├── secrets.ts        SecretManager — redaction of keys, tokens, passwords
+│   ├── plugin.ts         algorithme-security beforeToolCall guardrail hook
+│   └── index.ts          public exports
 ├── utils/
 │   └── text.ts           diff (LCS), fuzzy matching, BOM/line-ending handling, truncation
 ├── skills/
@@ -215,7 +250,7 @@ src/
 
 ### Sub-agents
 
-`pi` exposes a `subagent` tool. When the model delegates, a **fresh** agent loop is spawned
+The agent exposes a `subagent` tool. When the model delegates, a **fresh** agent loop is spawned
 with its own conversation, the same cwd, and (optionally) a different model. Nesting is
 bounded (`--max-depth` default 3), so delegation can never recurse forever.
 
@@ -226,7 +261,7 @@ main agent ── subagent("research error handling in src/")
 
 ```bash
 # The model decides when to delegate; no extra CLI flags required.
-pi "Refactor the providers directory and write a short report on the changes."
+algorithme "Refactor the providers directory and write a short report on the changes."
 ```
 
 ### Provider layer
@@ -241,13 +276,13 @@ OpenAI-compatible, so they share one thin SSE parser and differ only in endpoint
 
 ### Skills — add domain knowledge as agent tools
 
-Skills live in `.pi/skills` (searched recursively). Every command becomes a tool named
+Skills live in `.algorithme/skills` (searched recursively). Every command becomes a tool named
 `<skill>_<command>`.
 
 **TypeScript skill with inline handler:**
 
 ```ts
-// .pi/skills/greet.ts
+// .algorithme/skills/greet.ts
 export default {
   name: 'greet',
   description: 'Simple greeting skill',
@@ -263,7 +298,7 @@ export default {
 **Declarative YAML skill with an external handler module:**
 
 ```yaml
-# .pi/skills/math.yaml
+# .algorithme/skills/math.yaml
 name: math
 description: Arithmetic helpers
 commands:
@@ -274,7 +309,7 @@ commands:
 
 ### Plugins — hook into the agent lifecycle
 
-Plugins live in `.pi/plugins` and export a `Plugin` with an optional `setup()` and any of
+Plugins live in `.algorithme/plugins` and export a `Plugin` with an optional `setup()` and any of
 the hooks: `onAgentStart`, `onTurnStart`, `beforeToolCall`, `afterToolCall`, `onCompaction`,
 `onTurnEnd`.
 
@@ -285,7 +320,7 @@ the hooks: `onAgentStart`, `onTurnStart`, `beforeToolCall`, `afterToolCall`, `on
   a partial `{ content?, isError?, terminate? }` to mutate the executed result.
 
 ```ts
-// .pi/plugins/guard.ts — block destructive commands and rewrite tool output
+// .algorithme/plugins/guard.ts — block destructive commands and rewrite tool output
 export default {
   name: 'guard',
   hooks: {
@@ -305,6 +340,9 @@ export default {
   },
 };
 ```
+
+> The built-in `algorithme-security` plugin is attached automatically before any user
+> plugins, so sandbox and command-guard rules always run first.
 
 ### Session tree — branching history
 
@@ -333,7 +371,8 @@ root ── user "fix the bug"
 - **Self-correcting** — tool errors are returned to the model as readable traces, so it can diagnose and retry instead of stalling.
 - **Compaction** — when the estimated context tokens exceed the budget, the oldest messages are summarized by the model into a `compaction` entry and recent turns are retained verbatim. Compaction never leaves a dangling tool result and always keeps the newest message.
 - **Parallel tools** — multiple `tool_calls` in one turn execute concurrently.
-- **Safe by default** — `edit` refuses ambiguous matches; `bash` is cwd-aware with a timeout.
+- **Safe by default** — `edit` refuses ambiguous matches; `bash` is sandboxed and command-guarded with a timeout; file tools never leave the working directory.
+- **Secrets never leak** — keys and tokens are masked before rendering to screen or history.
 
 ---
 

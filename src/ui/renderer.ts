@@ -77,7 +77,7 @@ export class Tui {
   // -------------------------------------------------------------------------
 
   private buildFooter(): string {
-    const left = `${chalk.cyan('π')} ${chalk.bold(this.model)} ${chalk.dim('·')} ${truncate(this.cwd, 36)}`;
+    const left = `${chalk.cyan('◈')} ${chalk.bold(this.model)} ${chalk.dim('·')} ${truncate(this.cwd, 36)}`;
     const tokens = `in ${formatTokens(this.usage.input)} → out ${formatTokens(this.usage.output)}`;
     const status = this.statusText
       ? `  ${chalk.cyan(SPINNER_FRAMES[this.frame % SPINNER_FRAMES.length])} ${this.statusText}`
