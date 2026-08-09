@@ -20,7 +20,7 @@ architecture — hardened with a built-in security & guardrails layer.
 
 - **Deterministic agent loop** — `user input → system prompt + tools → stream → execute tools → append results → repeat`, with tool failures fed back to the model for self-correction.
 - **Secure by default** — sandboxed file access (path traversal + symlink protection), a shell command guard (no `rm -rf /`, `mkfs`, credential dumps, privilege escalation), and automatic secret masking in streams, logs, and history.
-- **Multi-provider, one interface** — a single streaming contract (`BaseProvider.chat`) over **OpenRouter**, **Groq**, and local **Ollama**. Pick any provider + model with one string ID.
+- **Multi-provider, one interface** — a single streaming contract (`BaseProvider.chat`) over **182 providers ported from the OpenCode catalog**: OpenRouter, OpenAI, Anthropic, Google Gemini, Groq, DeepSeek, Mistral, xAI, Together, Azure, Cohere, Ollama, and ~170 more. Pick any provider + model with one string ID.
 - **Zero-bloat core** — no vendor SDKs. Providers are thin SSE streams over the OpenAI-compatible API using native `fetch`.
 - **Native file tools** — `read`, `write`, `edit`, `bash`, `diff` — auto-registered, cwd-aware, sandboxed.
 - **Sub-agents** — the model can delegate isolated tasks to nested sub-agents (bounded depth) that run with fresh context and report back.
@@ -52,12 +52,33 @@ OPENROUTER_API_KEY=sk-or-...
 # Groq (optional) — https://console.groq.com/keys
 GROQ_API_KEY=gsk_...
 
+# Anthropic (optional) — https://console.anthropic.com/
+ANTHROPIC_API_KEY=sk-ant-...
+
+# OpenAI (optional) — https://platform.openai.com/api-keys
+OPENAI_API_KEY=sk-...
+
+# Google Gemini (optional) — https://aistudio.google.com/apikey
+GOOGLE_API_KEY=AIza...
+
 # Ollama (optional, local) — https://ollama.com
 OLLAMA_BASE_URL=http://localhost:11434/v1
 
 # Default model id (optional)
 ALGORITHME_MODEL=openrouter:deepseek/deepseek-r1
 ```
+
+Or store keys persistently with the built-in `/key` manager (no env needed):
+
+```bash
+algorithme
+> /key openrouter sk-or-...
+> /key openai sk-...
+> /key groq
+groq: gsk_••••abcd
+```
+
+Keys are resolved in this order: explicit argument → `/key` store → environment variable.
 
 > `PI_MODEL` is still honoured as a legacy fallback for `ALGORITHME_MODEL`.
 
@@ -104,6 +125,7 @@ Usage: algorithme [options] [prompt...]
 | --- | --- |
 | `/model <id>` | Switch provider/model mid-session. |
 | `/clear` | Reset the conversation history. |
+| `/key` | Manage stored API keys: `/key <provider>` (show), `/key <provider> <key>` (save), `/key <provider> clear` (remove). |
 | `/status` | Show model, cwd, tools, skills, plugins, and session stats. |
 | `/history` | Show the current conversation path with entry ids. |
 | `/fork <n>` | Branch off from message #n (1-based, see `/history`). |
@@ -181,14 +203,46 @@ Model ids follow the `provider:model` pattern. A bare model string defaults to O
 ```bash
 algorithme -m openrouter:deepseek/deepseek-r1 "summarize src/index.ts"
 algorithme -m groq:llama-3.3-70b-versatile "write tests for src/tools"
+algorithme -m anthropic:claude-sonnet-4-5 "explain the agent loop"
+algorithme -m google:gemini-2.5-pro "review the security layer"
 algorithme -m ollama:llama3 "what files import chalk?"
 ```
+
+The provider table below is ported from the OpenCode provider catalog. Every provider in
+the `openai` kind speaks the OpenAI-compatible chat-completions protocol; `anthropic` and
+`google` use their native streaming APIs; `azure` uses the Azure OpenAI endpoint. All
+support streaming output, tool/function calling, and key resolution via env var or `/key`.
 
 | Provider | Env var | Notes |
 | --- | --- | --- |
 | `openrouter` | `OPENROUTER_API_KEY` | 400+ models behind one key |
+| `openai` | `OPENAI_API_KEY` | OpenAI GPT models |
+| `anthropic` | `ANTHROPIC_API_KEY` | Claude — native Messages API |
+| `google` | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | Gemini — native generateContent |
 | `groq` | `GROQ_API_KEY` | LPU-accelerated inference |
+| `deepseek` | `DEEPSEEK_API_KEY` | DeepSeek chat/reasoner |
 | `ollama` | `OLLAMA_API_KEY` (optional) | Fully local, offline |
+| `mistral` | `MISTRAL_API_KEY` | Mistral models |
+| `xai` | `XAI_API_KEY` | Grok models |
+| `togetherai` | `TOGETHER_API_KEY` | Open-source hosting |
+| `cerebras` | `CEREBRAS_API_KEY` | Cerebras inference |
+| `deepinfra` | `DEEPINFRA_API_KEY` | DeepInfra serverless |
+| `cohere` | `COHERE_API_KEY` | Command models |
+| `perplexity` | `PERPLEXITY_API_KEY` | Perplexity Sonar |
+| `meta` | `META_MODEL_API_KEY` | Meta models |
+| `nvidia` | `NVIDIA_API_KEY` | Nvidia NIM |
+| `azure` | `AZURE_RESOURCE_NAME` + `AZURE_API_KEY` | Azure OpenAI (api-version 2024-06-01) |
+| `github-copilot` | `GITHUB_TOKEN` | Copilot models |
+| `fireworks-ai` | `FIREWORKS_API_KEY` | Fast open-source inference |
+| `venice` | `VENICE_API_KEY` | Venice AI |
+
+Plus ~160 more OpenAI-compatible providers from the catalog (`302ai`, `aihubmix`, `anyapi`,
+`baseten`, `clarifai`, `databricks`, `digitalocean`, `friendli`, `huggingface`, `moonshotai`,
+`novita-ai`, `openrouter` gateway clones, `poe`, `siliconflow`, `stepfun`, `upstage`,
+`zhipuai`, and many more). Run `/status` for the active provider, or `node -e
+"import('./dist/providers/catalog.js').then(m=>console.log(Object.keys(m.PROVIDERS).join(' ')))"`
+to list every id. Providers that require native cloud SDK auth (e.g. `amazon-bedrock`,
+`google-vertex`, `watsonx`) are recognized but rejected with a clear message.
 
 ---
 
@@ -203,11 +257,14 @@ src/
 │   ├── session.ts        in-memory session tree: entries, lanes, fork/select, LLM compaction entries
 │   └── subagent.ts       nested sub-agent tool (fresh context, bounded depth)
 ├── providers/            multi-provider abstraction
+│   ├── types.ts          ProviderConfig / ProviderKind contracts
+│   ├── catalog.ts        182-provider catalog ported from OpenCode (base URLs, env vars, headers)
 │   ├── base.ts           BaseProvider contract + shared OpenAI-compatible SSE client
-│   ├── openrouter.ts     OpenRouter implementation
-│   ├── groq.ts           Groq implementation
-│   ├── ollama.ts         Ollama implementation
-│   └── factory.ts        createProvider("provider:model") + parseModelId
+│   ├── anthropic.ts      native Anthropic Messages API (streaming + tool_use)
+│   ├── gemini.ts         native Google Gemini generateContent (streaming + functionCall)
+│   ├── azure.ts          Azure OpenAI (api-key header + api-version query)
+│   ├── keys.ts           /key config manager — persistent API key store
+│   └── factory.ts        createProvider("provider:model") + parseModelId + key resolution
 ├── tools/
 │   ├── registry.ts       ToolRegistry, Tool/ToolContext contracts, ToolError
 │   ├── read.ts           file/directory reader (offset/limit, numbered lines)
@@ -267,8 +324,10 @@ algorithme "Refactor the providers directory and write a short report on the cha
 ### Provider layer
 
 Every provider implements `BaseProvider.chat(messages, tools)` as an async iterator of
-`text | tool | usage | end | error` events. OpenRouter, Groq, and Ollama are all
-OpenAI-compatible, so they share one thin SSE parser and differ only in endpoint + auth.
+`text | tool | usage | end | error` events. Most catalog providers are OpenAI-compatible,
+so they share one thin SSE parser and differ only in endpoint + auth. Anthropic and Google
+Gemini speak their native streaming protocols and are converted from the same internal
+message shape (`tool_use`/`tool_result` and `functionCall`/`functionResponse` blocks).
 
 ---
 

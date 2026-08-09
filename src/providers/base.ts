@@ -52,6 +52,13 @@ export interface StreamOptions {
   apiKey?: string;
   headers?: Record<string, string>;
   includeUsage?: boolean;
+  /** HTTP header name used to carry the API key (default: `authorization: Bearer`). */
+  authHeader?: string;
+}
+
+/** Expand `${ENV_VAR}` placeholders in a base URL using process.env. */
+export function expandEnvTemplates(baseUrl: string): string {
+  return baseUrl.replace(/\$\{([A-Z0-9_]+)\}/g, (match, name: string) => process.env[name] ?? match);
 }
 
 export interface StreamRequest extends StreamOptions, ChatParams {
@@ -70,6 +77,7 @@ export async function* streamChatCompletions(
     apiKey,
     headers,
     includeUsage,
+    authHeader,
     messages,
     tools,
     temperature,
@@ -77,7 +85,9 @@ export async function* streamChatCompletions(
     model,
   } = opts;
 
-  const url = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  const expanded = expandEnvTemplates(baseUrl);
+  const [pathPart, queryPart] = expanded.split('?');
+  const url = `${pathPart.replace(/\/+$/, '')}/chat/completions${queryPart ? `?${queryPart}` : ''}`;
   const body: Record<string, unknown> = {
     model,
     messages,
@@ -88,12 +98,21 @@ export async function* streamChatCompletions(
   if (tools && tools.length > 0) body.tools = tools;
   if (includeUsage) body.stream_options = { include_usage: true };
 
+  const authHeaders: Record<string, string> = {};
+  if (apiKey) {
+    if (authHeader) {
+      authHeaders[authHeader] = apiKey;
+    } else {
+      authHeaders.authorization = `Bearer ${apiKey}`;
+    }
+  }
+
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       accept: 'text/event-stream',
-      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+      ...authHeaders,
       ...headers,
     },
     body: JSON.stringify(body),
@@ -193,6 +212,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
   private readonly apiKey?: string;
   private readonly headers?: Record<string, string>;
   private readonly includeUsage: boolean;
+  private readonly authHeader?: string;
 
   constructor(opts: {
     name: string;
@@ -201,6 +221,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
     apiKey?: string;
     headers?: Record<string, string>;
     includeUsage?: boolean;
+    authHeader?: string;
   }) {
     super();
     this.name = opts.name;
@@ -209,6 +230,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
     this.apiKey = opts.apiKey;
     this.headers = opts.headers;
     this.includeUsage = opts.includeUsage ?? true;
+    this.authHeader = opts.authHeader;
   }
 
   chat(params: ChatParams): AsyncIterable<ProviderEvent> {
@@ -217,6 +239,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
       apiKey: this.apiKey,
       headers: this.headers,
       includeUsage: this.includeUsage,
+      authHeader: this.authHeader,
       model: this.model,
       messages: params.messages,
       tools: params.tools,

@@ -5,7 +5,8 @@ import path from 'node:path';
 import chalk from 'chalk';
 import { program } from 'commander';
 import prompts from 'prompts';
-import { createProvider, PROVIDER_REGISTRY } from './providers/factory.js';
+import { createProvider, PROVIDER_REGISTRY, PROVIDERS } from './providers/factory.js';
+import { keyStore } from './providers/keys.js';
 import { createDefaultRegistry, type ToolRegistry } from './tools/registry.js';
 import { AgentLoop, type AgentRunResult, type CompactionRunResult, type RunCallbacks } from './agent/loop.js';
 import { createSubagentTool } from './agent/subagent.js';
@@ -179,6 +180,7 @@ const COMMANDS: Array<{ cmd: string; help: string }> = [
   { cmd: '/go <suffix>', help: 'Switch the cursor to a lane' },
   { cmd: '/compact', help: 'Summarize old history now' },
   { cmd: '/clear', help: 'Reset conversation history' },
+  { cmd: '/key', help: 'Manage stored API keys (/key <provider> [key])' },
   { cmd: '/exit', help: 'Leave the agent' },
 ];
 
@@ -267,6 +269,49 @@ async function handleCommand(app: App, tui: Tui, cmd: string, arg: string): Prom
       app.clearHistory();
       console.log(chalk.dim('history cleared'));
       break;
+    case '/key': {
+      const [provider, value] = arg.split(' ').map((s) => s.trim());
+      if (!provider) {
+        const names = keyStore.names();
+        if (names.length === 0) {
+          console.log(chalk.dim('no stored keys — usage: /key <provider> <api-key>'));
+        } else {
+          const rows = names.map((n) => [
+            n,
+            `${PROVIDERS[n]?.name ?? n}`,
+            chalk.dim(maskKey(keyStore.get(n) ?? '')),
+          ]);
+          console.log(table({ headers: ['Provider', 'Name', 'Key'], rows }));
+        }
+        break;
+      }
+      if (!value) {
+        const stored = keyStore.get(provider);
+        if (stored) {
+          console.log(chalk.green(`${provider}: ${maskKey(stored)}`));
+        } else {
+          const env = PROVIDERS[provider]?.env.filter((v) => process.env[v]).join(' / ');
+          console.log(
+            env
+              ? chalk.dim(`${provider}: from env ${env}`)
+              : chalk.dim(`${provider}: no key stored — usage: /key ${provider} <api-key>`),
+          );
+        }
+        break;
+      }
+      if (value === 'clear') {
+        if (keyStore.remove(provider)) console.log(chalk.green(`${provider}: key removed`));
+        else console.log(chalk.dim(`${provider}: no stored key`));
+        break;
+      }
+      if (!PROVIDERS[provider]) {
+        console.log(chalk.red(`unknown provider: ${provider}`));
+        break;
+      }
+      keyStore.set(provider, value);
+      console.log(chalk.green(`${provider}: key saved (${maskKey(value)})`));
+      break;
+    }
     case '/model': {
       if (!arg) {
         console.log(chalk.dim(`current model: ${app.modelId}`));
@@ -507,6 +552,11 @@ async function main(): Promise<void> {
 
 function collect(value: string, previous: string[]): string[] {
   return previous.concat(value.split(',').filter(Boolean));
+}
+
+function maskKey(key: string): string {
+  if (key.length <= 8) return '••••';
+  return `${key.slice(0, 4)}••••${key.slice(-4)}`;
 }
 
 main().catch((e) => {
