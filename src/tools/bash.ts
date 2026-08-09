@@ -5,6 +5,21 @@ import type { Tool } from './registry.js';
 const TIMEOUT_MS = 120_000;
 const MAX_BUFFER = 10 * 1024 * 1024;
 
+/**
+ * Pick the shell binary for the current platform.
+ * - `PI_SHELL` env override wins.
+ * - Termux (Android) keeps bash under `$PREFIX/bin/bash` (e.g. /data/data/com.termux/files/usr).
+ * - Otherwise fall back to the login shell, then /bin/bash.
+ */
+function detectShell(): string {
+  if (process.env.PI_SHELL) return process.env.PI_SHELL;
+  if (process.env.TERMUX_VERSION || process.env.PREFIX) {
+    const prefix = process.env.PREFIX ?? '/data/data/com.termux/files/usr';
+    return path.join(prefix, 'bin', 'bash');
+  }
+  return process.env.SHELL || '/bin/bash';
+}
+
 export const bashTool: Tool = {
   definition: {
     name: 'bash',
@@ -39,7 +54,7 @@ export const bashTool: Tool = {
           env: process.env,
           timeout: TIMEOUT_MS,
           maxBuffer: MAX_BUFFER,
-          shell: '/bin/bash',
+          shell: detectShell(),
         },
         (error, stdout, stderr) => {
           const out = [stdout, stderr].filter(Boolean).join('\n').trim();

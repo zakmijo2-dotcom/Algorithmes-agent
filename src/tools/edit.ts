@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { ToolError, type Tool } from './registry.js';
+import { applyReplacement, generateDiffString, normalizeToLF, stripBom } from '../utils/text.js';
 
 export const editTool: Tool = {
   definition: {
@@ -22,25 +23,40 @@ export const editTool: Tool = {
           type: 'string',
           description: 'The replacement text.',
         },
+        show_diff: {
+          type: 'boolean',
+          description: 'When true, include a line diff of the change in the result. Defaults to false.',
+        },
       },
       required: ['path', 'old_str', 'new_str'],
     },
   },
 
-  async execute(args: { path: string; old_str: string; new_str: string }, ctx) {
+  async execute(args: { path: string; old_str: string; new_str: string; show_diff?: boolean }, ctx) {
     const abs = path.resolve(ctx.cwd, args.path);
-    const content = await fs.readFile(abs, 'utf8');
-    const matches = content.split(args.old_str).length - 1;
+    const raw = await fs.readFile(abs, 'utf8');
+    const { bom, text } = stripBom(raw);
+    const oldText = normalizeToLF(args.old_str);
+    const newText = normalizeToLF(args.new_str);
+    const before = text;
 
-    if (matches === 0) {
-      throw new ToolError(`old_str was not found in ${abs}`, 'edit');
+    let updated: string;
+    try {
+      updated = applyReplacement(before, oldText, newText);
+    } catch (e) {
+      throw new ToolError((e as Error).message, 'edit');
     }
-    if (matches > 1) {
-      throw new ToolError(`old_str matches ${matches} times in ${abs}; provide more context`, 'edit');
+    if (updated === before) {
+      throw new ToolError('No changes made: the replacement produced identical content.', 'edit');
     }
 
-    const updated = content.replace(args.old_str, args.new_str);
-    await fs.writeFile(abs, updated, 'utf8');
-    return `Applied edit to ${abs} (1 replacement).`;
+    await fs.writeFile(abs, bom + updated, 'utf8');
+
+    let result = `Applied edit to ${abs} (1 replacement).`;
+    if (args.show_diff) {
+      const { diff } = generateDiffString(before, updated);
+      result += `\n\`\`\`diff\n${diff}\n\`\`\``;
+    }
+    return result;
   },
 };

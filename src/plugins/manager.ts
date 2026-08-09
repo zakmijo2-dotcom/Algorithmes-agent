@@ -1,7 +1,17 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { HOOK_NAMES, type HookName, type Plugin } from './hooks.js';
+import {
+  HOOK_NAMES,
+  foldAfterToolCall,
+  foldBeforeToolCall,
+  type AfterToolCallContext,
+  type AfterToolCallResult,
+  type BeforeToolCallContext,
+  type BeforeToolCallResult,
+  type HookName,
+  type Plugin,
+} from './hooks.js';
 
 const MODULE_EXT = new Set(['.ts', '.js', '.mjs', '.cjs']);
 
@@ -49,11 +59,43 @@ export class PluginManager {
     }
   }
 
-  async emitHook(name: HookName, ...args: any[]): Promise<void> {
+  /** Fire-and-forget fan-out: returns each hook's resolved result in order. */
+  async emitHook(name: HookName, ...args: any[]): Promise<any[]> {
+    const results: any[] = [];
     for (const plugin of this.plugins) {
       const hook = plugin.hooks?.[name];
-      if (hook) await (hook as (...a: any[]) => void)(...args);
+      if (hook) results.push(await (hook as (...a: any[]) => void)(...args));
     }
+    return results;
+  }
+
+  /**
+   * Run `beforeToolCall` hooks across plugins. Stops at the first plugin that
+   * blocks and returns its result. Returns undefined when no plugin blocks.
+   */
+  async runBeforeToolCall(ctx: BeforeToolCallContext): Promise<BeforeToolCallResult | undefined> {
+    const results: Array<BeforeToolCallResult | void> = [];
+    for (const plugin of this.plugins) {
+      const hook = plugin.hooks?.beforeToolCall;
+      if (!hook) continue;
+      results.push(await hook(ctx));
+      const folded = foldBeforeToolCall(results);
+      if (folded) return folded;
+    }
+    return undefined;
+  }
+
+  /**
+   * Run `afterToolCall` hooks across plugins. Merges partial overrides so
+   * later plugins win on a per-field basis.
+   */
+  async runAfterToolCall(ctx: AfterToolCallContext): Promise<AfterToolCallResult | undefined> {
+    const results: Array<AfterToolCallResult | void> = [];
+    for (const plugin of this.plugins) {
+      const hook = plugin.hooks?.afterToolCall;
+      if (hook) results.push(await hook(ctx));
+    }
+    return foldAfterToolCall(results);
   }
 
   private async loadModuleFile(file: string): Promise<void> {

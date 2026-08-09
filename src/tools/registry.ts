@@ -3,6 +3,7 @@ import { readTool } from './read.js';
 import { writeTool } from './write.js';
 import { editTool } from './edit.js';
 import { bashTool } from './bash.js';
+import { diffTool } from './diff.js';
 
 export interface ToolContext {
   cwd: string;
@@ -60,6 +61,6 @@ export class ToolRegistry {
 
 export function createDefaultRegistry(): ToolRegistry {
   const registry = new ToolRegistry();
-  registry.registerMany([readTool, writeTool, editTool, bashTool]);
+  registry.registerMany([readTool, writeTool, editTool, bashTool, diffTool]);
   return registry;
 }
