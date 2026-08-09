@@ -1,5 +1,5 @@
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
+import { resolvePathSafe } from '../security/pathguard.js';
 import type { Tool } from './registry.js';
 
 export const readTool: Tool = {
@@ -30,7 +30,9 @@ export const readTool: Tool = {
   },
 
   async execute(args: { path: string; offset?: number; limit?: number }, ctx) {
-    const abs = path.resolve(ctx.cwd, args.path);
+    const abs = await resolvePathSafe(ctx.cwd, args.path, {
+      extraRoots: (ctx.allowPaths as string[] | undefined) ?? [],
+    });
     const stat = await fs.stat(abs);
 
     if (stat.isDirectory()) {

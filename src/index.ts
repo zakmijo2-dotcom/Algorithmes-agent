@@ -10,6 +10,7 @@ import { AgentLoop, type AgentRunResult, type CompactionRunResult, type RunCallb
 import { createSubagentTool } from './agent/subagent.js';
 import { loadSkills } from './skills/loader.js';
 import { PluginManager } from './plugins/manager.js';
+import { createSecurityPlugin, SecretManager } from './security/index.js';
 import { formatTokens, headerBox, table, truncate } from './ui/format.js';
 import { Tui } from './ui/renderer.js';
 
@@ -28,6 +29,7 @@ export interface AppOptions {
 export class App {
   readonly registry: ToolRegistry = createDefaultRegistry();
   readonly pluginManager = new PluginManager();
+  private readonly secrets = new SecretManager();
   private agent!: AgentLoop;
   private model: string;
   private skillNames: string[] = [];
@@ -111,6 +113,9 @@ export class App {
     });
     this.skillNames = loaded.map((s) => s.name);
 
+    // Built-in guardrails run first so every tool call is path/command checked.
+    this.pluginManager.attach(createSecurityPlugin({ cwd: this.opts.cwd }));
+
     for (const dir of this.opts.pluginsDirs) {
       await this.pluginManager.loadFromDir(path.resolve(this.opts.cwd, dir));
     }
@@ -153,6 +158,7 @@ export class App {
       maxTurns: this.opts.maxTurns,
       temperature: this.opts.temperature,
       cwd: this.opts.cwd,
+      secrets: this.secrets,
     });
   }
 }

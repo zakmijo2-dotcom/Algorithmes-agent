@@ -1,5 +1,7 @@
 import { exec } from 'node:child_process';
 import path from 'node:path';
+import { assertCommandSafe } from '../security/commands.js';
+import { resolvePathSafe } from '../security/pathguard.js';
 import type { Tool } from './registry.js';
 
 const TIMEOUT_MS = 120_000;
@@ -46,11 +48,19 @@ export const bashTool: Tool = {
       throw new Error('bash: "command" must be a non-empty string');
     }
 
+    assertCommandSafe(args.command, { cwd: ctx.cwd });
+
+    const runCwd = args.cwd
+      ? await resolvePathSafe(ctx.cwd, args.cwd, {
+          extraRoots: (ctx.allowPaths as string[] | undefined) ?? [],
+        })
+      : ctx.cwd;
+
     return new Promise<string>((resolve, reject) => {
       exec(
         args.command,
         {
-          cwd: args.cwd ? path.resolve(ctx.cwd, args.cwd) : ctx.cwd,
+          cwd: runCwd,
           env: process.env,
           timeout: TIMEOUT_MS,
           maxBuffer: MAX_BUFFER,

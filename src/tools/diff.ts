@@ -1,5 +1,5 @@
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
+import { resolvePathSafe } from '../security/pathguard.js';
 import { ToolError, type Tool } from './registry.js';
 import { generateDiffString } from '../utils/text.js';
 
@@ -34,13 +34,14 @@ export const diffTool: Tool = {
 
   async execute(args: { file?: string; fileA?: string; fileB?: string; context?: number }, ctx) {
     const context = typeof args.context === 'number' && args.context >= 0 ? args.context : 4;
+    const extraRoots = { extraRoots: (ctx.allowPaths as string[] | undefined) ?? [] };
 
     let oldContent: string;
     let newContent: string;
     let label: string;
 
     if (args.file) {
-      const abs = path.resolve(ctx.cwd, args.file);
+      const abs = await resolvePathSafe(ctx.cwd, args.file, extraRoots);
       label = args.file;
       try {
         newContent = await fs.readFile(abs, 'utf8');
@@ -58,8 +59,8 @@ export const diffTool: Tool = {
         oldContent = '';
       }
     } else {
-      const a = path.resolve(ctx.cwd, args.fileA!);
-      const b = path.resolve(ctx.cwd, args.fileB!);
+      const a = await resolvePathSafe(ctx.cwd, args.fileA!, extraRoots);
+      const b = await resolvePathSafe(ctx.cwd, args.fileB!, extraRoots);
       label = `${args.fileA} → ${args.fileB}`;
       oldContent = await fs.readFile(a, 'utf8').catch(() => '');
       newContent = await fs.readFile(b, 'utf8').catch(() => '');

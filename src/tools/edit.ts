@@ -1,5 +1,5 @@
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
+import { resolvePathSafe } from '../security/pathguard.js';
 import { ToolError, type Tool } from './registry.js';
 import { applyReplacement, generateDiffString, normalizeToLF, stripBom } from '../utils/text.js';
 
@@ -33,7 +33,9 @@ export const editTool: Tool = {
   },
 
   async execute(args: { path: string; old_str: string; new_str: string; show_diff?: boolean }, ctx) {
-    const abs = path.resolve(ctx.cwd, args.path);
+    const abs = await resolvePathSafe(ctx.cwd, args.path, {
+      extraRoots: (ctx.allowPaths as string[] | undefined) ?? [],
+    });
     const raw = await fs.readFile(abs, 'utf8');
     const { bom, text } = stripBom(raw);
     const oldText = normalizeToLF(args.old_str);

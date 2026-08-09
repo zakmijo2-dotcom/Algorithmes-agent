@@ -1,11 +1,13 @@
 import type { BaseProvider, Message, ToolDefinition } from '../providers/base.js';
 import { ToolRegistry, type ToolContext } from '../tools/registry.js';
+import { DEFAULT_SYSTEM_PROMPT } from './prompt.js';
 import {
   DEFAULT_COMPACTION_SETTINGS,
   SessionTree,
   type CompactionSettings,
 } from './session.js';
 import type { PluginManager } from '../plugins/manager.js';
+import { SecretManager } from '../security/secrets.js';
 
 export interface AgentOptions {
   systemPrompt?: string;
@@ -19,6 +21,10 @@ export interface AgentOptions {
   contextWindow?: number;
   /** Compaction thresholds; set `enabled: false` to disable. */
   compaction?: CompactionSettings;
+  /** Secret manager used to redact sensitive values from streams and history. */
+  secrets?: SecretManager;
+  /** Extra absolute directories the agent is allowed to touch (beyond cwd). */
+  allowPaths?: string[];
 }
 
 export interface TokenUsage {
@@ -59,16 +65,6 @@ export interface CompactionRunResult {
   tokensBefore: number;
   summary: string;
 }
-
-const DEFAULT_SYSTEM_PROMPT = `You are pi, a minimalist, deterministic coding agent running in a terminal.
-You operate on the local repository with a small set of native tools. Follow these rules:
-
-1. Think before you act. Prefer a few high-value tool calls over many tiny ones.
-2. Use read/write/edit for files. Use bash for anything else: builds, tests, git, grep, etc.
-3. When a tool call fails, read the error, diagnose, and self-correct rather than giving up.
-4. For isolated sub-tasks, delegate with the subagent tool and use its returned summary.
-5. After completing the task, reply with a concise summary of what you changed and why.
-6. Be terse. No pleasantries, no preamble, no trailing remarks.`;
 
 const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant. Read the conversation between a user and an AI coding agent, then produce a structured summary covering:
 
@@ -121,6 +117,7 @@ async function completeText(
 
 export class AgentLoop {
   private readonly session: SessionTree;
+  private readonly secrets: SecretManager;
   private readonly options: AgentOptions &
     Required<Pick<AgentOptions, 'maxTurns' | 'temperature' | 'maxTokens' | 'cwd' | 'depth'>>;
   private readonly compaction: CompactionSettings;
@@ -131,6 +128,7 @@ export class AgentLoop {
     options: AgentOptions = {},
   ) {
     this.session = new SessionTree(options.contextWindow ?? 48_000);
+    this.secrets = options.secrets ?? new SecretManager();
     this.options = {
       maxTurns: options.maxTurns ?? 24,
       temperature: options.temperature ?? 0.0,
@@ -199,16 +197,17 @@ export class AgentLoop {
       );
       usage.inputTokens += inputTokens;
       usage.outputTokens += outputTokens;
+      const safeText = this.secrets.mask(text);
 
       if (calls.length > 0) {
         toolCalls += calls.length;
         this.session.append({
           role: 'assistant',
-          content: text || null,
+          content: safeText || null,
           tool_calls: calls.map((c) => ({
             id: c.id,
             type: 'function',
-            function: { name: c.name, arguments: c.arguments },
+            function: { name: c.name, arguments: this.secrets.mask(c.arguments) },
           })),
         });
 
@@ -226,9 +225,9 @@ export class AgentLoop {
         continue;
       }
 
-      await plugins?.emitHook('onTurnEnd', { text, toolCalls, turns });
-      this.session.append({ role: 'assistant', content: text });
-      return { text, toolCalls, turns, usage, durationMs: Date.now() - startedAt, compactions };
+      await plugins?.emitHook('onTurnEnd', { text: safeText, toolCalls, turns });
+      this.session.append({ role: 'assistant', content: safeText });
+      return { text: safeText, toolCalls, turns, usage, durationMs: Date.now() - startedAt, compactions };
     }
   }
 
@@ -251,14 +250,20 @@ export class AgentLoop {
             content: `${SUMMARIZATION_SYSTEM_PROMPT}\n\nUpdate the existing summary with the new conversation. Keep the same structure.`,
           },
           { role: 'user' as const, content: `Previous summary:\n${preparation.previousSummary}` },
-          { role: 'user' as const, content: serializeMessages(preparation.messagesToSummarize) },
+          {
+            role: 'user' as const,
+            content: serializeMessages(preparation.messagesToSummarize.map((m) => this.maskMessage(m))),
+          },
         ]
       : [
           { role: 'system' as const, content: SUMMARIZATION_SYSTEM_PROMPT },
-          { role: 'user' as const, content: serializeMessages(preparation.messagesToSummarize) },
+          {
+            role: 'user' as const,
+            content: serializeMessages(preparation.messagesToSummarize.map((m) => this.maskMessage(m))),
+          },
         ];
 
-    const summary = await completeText(this.provider, request, 2_000);
+    const summary = this.secrets.mask(await completeText(this.provider, request, 2_000));
     this.session.applyCompaction(preparation, summary);
     await plugins?.emitHook('onCompaction', {
       summarizedMessages: preparation.messagesToSummarize.length,
@@ -292,7 +297,7 @@ export class AgentLoop {
       switch (event.type) {
         case 'text':
           textParts.push(event.delta);
-          onTextDelta?.(event.delta);
+          onTextDelta?.(this.secrets.mask(event.delta));
           break;
         case 'tool': {
           const existing = calls.get(event.index);
@@ -329,7 +334,11 @@ export class AgentLoop {
     plugins?: PluginManager,
     callbacks: RunCallbacks = {},
   ): Promise<Array<{ callId: string; content: string }>> {
-    const ctx: ToolContext = { cwd: this.options.cwd, depth: this.options.depth };
+    const ctx: ToolContext = {
+      cwd: this.options.cwd,
+      depth: this.options.depth,
+      allowPaths: this.options.allowPaths ?? [],
+    };
 
     // Run tool calls concurrently — the model decides parallelism; we honor it.
     return Promise.all(
@@ -359,7 +368,7 @@ export class AgentLoop {
           return { callId: call.id, content: text };
         }
 
-        callbacks.onToolStart?.(call.name, args);
+        callbacks.onToolStart?.(call.name, this.maskArgs(args));
         let result: string;
         let isError = false;
         try {
@@ -368,21 +377,44 @@ export class AgentLoop {
           isError = true;
           result = e instanceof Error ? `Error (${call.name}): ${e.message}` : String(e);
         }
-        callbacks.onToolEnd?.(call.name, result, isError);
+        const maskedResult = this.secrets.mask(result);
+        callbacks.onToolEnd?.(call.name, maskedResult, isError);
 
         const override = await plugins?.runAfterToolCall({
           ...hookCtx,
-          result,
+          result: maskedResult,
           isError,
         });
         if (override) {
-          if (override.content !== undefined) result = override.content;
+          if (override.content !== undefined) result = this.secrets.mask(override.content);
           if (override.isError !== undefined) isError = override.isError;
         }
 
-        const finalText = isError && !result.startsWith('Error') ? `Error (${call.name}): ${result}` : result;
-        return { callId: call.id, content: finalText };
+        const finalText =
+          isError && !maskedResult.startsWith('Error') ? `Error (${call.name}): ${maskedResult}` : maskedResult;
+        return { callId: call.id, content: this.secrets.mask(finalText) };
       }),
     );
+  }
+
+  /** Redact sensitive values from a parsed arguments object (for UI display). */
+  private maskArgs(args: any): any {
+    try {
+      return JSON.parse(this.secrets.mask(JSON.stringify(args)));
+    } catch {
+      return args;
+    }
+  }
+
+  /** Redact sensitive values from a single message (content + tool args). */
+  private maskMessage(message: Message): Message {
+    return {
+      ...message,
+      content: message.content ? this.secrets.mask(message.content) : message.content,
+      tool_calls: message.tool_calls?.map((tc) => ({
+        ...tc,
+        function: { ...tc.function, arguments: this.secrets.mask(tc.function.arguments) },
+      })),
+    };
   }
 }
