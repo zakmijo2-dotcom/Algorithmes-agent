@@ -20,7 +20,7 @@ architecture — hardened with a built-in security & guardrails layer.
 
 - **Deterministic agent loop** — `user input → system prompt + tools → stream → execute tools → append results → repeat`, with tool failures fed back to the model for self-correction.
 - **Secure by default** — sandboxed file access (path traversal + symlink protection), a shell command guard (no `rm -rf /`, `mkfs`, credential dumps, privilege escalation), and automatic secret masking in streams, logs, and history.
-- **Multi-provider, one interface** — a single streaming contract (`BaseProvider.chat`) over **182 providers ported from the OpenCode catalog**: OpenRouter, OpenAI, Anthropic, Google Gemini, Groq, DeepSeek, Mistral, xAI, Together, Azure, Cohere, Ollama, and ~170 more. Pick any provider + model with one string ID.
+- **Multi-provider, one interface** — a single streaming contract (`BaseProvider.chat`) over **182 providers** from the integrated catalog (OpenRouter, OpenAI, Anthropic, Google Gemini, Groq, DeepSeek, Mistral, xAI, Together, Azure, Cohere, Ollama, and ~170 more). Pick any provider + model with one string ID.
 - **Zero-bloat core** — no vendor SDKs. Providers are thin SSE streams over the OpenAI-compatible API using native `fetch`.
 - **Native file tools** — `read`, `write`, `edit`, `bash`, `diff` — auto-registered, cwd-aware, sandboxed.
 - **Sub-agents** — the model can delegate isolated tasks to nested sub-agents (bounded depth) that run with fresh context and report back.
@@ -232,7 +232,7 @@ algorithme -m google:gemini-2.5-pro "review the security layer"
 algorithme -m ollama:llama3 "what files import chalk?"
 ```
 
-The provider table below is ported from the OpenCode provider catalog. Every provider in
+The provider table below lists all integrated providers. Every provider in
 the `openai` kind speaks the OpenAI-compatible chat-completions protocol; `anthropic` and
 `google` use their native streaming APIs; `azure` uses the Azure OpenAI endpoint. All
 support streaming output, tool/function calling, and key resolution via env var or `/key`.
@@ -282,7 +282,7 @@ src/
 │   └── subagent.ts       nested sub-agent tool (fresh context, bounded depth)
 ├── providers/            multi-provider abstraction
 │   ├── types.ts          ProviderConfig / ProviderKind contracts
-│   ├── catalog.ts        182-provider catalog ported from OpenCode (base URLs, env vars, headers)
+│   ├── catalog.ts        182-provider catalog (base URLs, env vars, headers)
 │   ├── base.ts           BaseProvider contract + shared OpenAI-compatible SSE client
 │   ├── anthropic.ts      native Anthropic Messages API (streaming + tool_use)
 │   ├── gemini.ts         native Google Gemini generateContent (streaming + functionCall)

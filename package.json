@@ -1,7 +1,7 @@
 {
   "name": "algorithme-ai-agent",
   "version": "1.0.0",
-  "description": "Algorithme AI Agent - Deterministic & Secure Multi-Provider Coding Harness",
+  "description": "Algorithme AI Agent - Production Grade Autonomous Coding Agent",
   "type": "module",
   "license": "MIT",
   "bin": {
