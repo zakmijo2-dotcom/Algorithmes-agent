@@ -16,6 +16,7 @@ import { PluginManager } from './plugins/manager.js';
 import { createSecurityPlugin, SecretManager } from './security/index.js';
 import { formatTokens, headerBox, table, truncate } from './ui/format.js';
 import { Tui } from './ui/renderer.js';
+import { TuiApp } from './ui/tui.js';
 
 export interface AppOptions {
   model: string;
@@ -58,6 +59,10 @@ export class App {
 
   get cwd(): string {
     return this.opts.cwd;
+  }
+
+  get maxTurns(): number | undefined {
+    return this.opts.maxTurns;
   }
 
   get skills(): string[] {
@@ -419,10 +424,38 @@ async function executeTurn(app: App, tui: Tui, input: string): Promise<AgentRunR
   }
 }
 
-async function singleShot(app: App, prompt: string): Promise<void> {
-  const tui = new Tui(app.modelId, app.cwd);
-  const result = await executeTurn(app, tui, prompt);
-  if (result === undefined) process.exitCode = 1;
+async function singleShot(app: App, prompt: string, useTui = false): Promise<void> {
+  if (!useTui || !process.stdout.isTTY || !process.stderr.isTTY) {
+    const tui = new Tui(app.modelId, app.cwd);
+    const result = await executeTurn(app, tui, prompt);
+    if (result === undefined) process.exitCode = 1;
+    return;
+  }
+
+  const tui = new TuiApp(app.modelId, app.cwd);
+  tui.setMaxTurns(app.maxTurns ?? 24);
+  tui.addUserMessage(prompt);
+  tui.beginAssistantMessage();
+
+  try {
+    const result = await app.run(prompt, {
+      onTextDelta: (delta) => tui.onTextDelta(delta),
+      onToolStart: (name, args) => tui.onToolStart(name, formatArgs(args)),
+      onToolEnd: (name, resultText, isError) => tui.onToolEnd(name, resultText, isError),
+    });
+    tui.addUsage(result.usage.inputTokens, result.usage.outputTokens);
+    tui.setTurn(result.turns);
+    tui.flushStreaming();
+
+    if (!app.streaming) {
+      process.stdout.write(`${result.text}\n`);
+    }
+  } catch (e) {
+    tui.error(`Error: ${(e as Error).message}`);
+    process.exitCode = 1;
+  } finally {
+    tui.stop();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -456,10 +489,19 @@ async function ask(): Promise<string> {
   return typeof response?.value === 'string' ? response.value.trim() : '';
 }
 
-async function interactive(app: App): Promise<void> {
-  const tui = new Tui(app.modelId, app.cwd);
+async function interactive(app: App, useTui = false): Promise<void> {
+  const oldTui = new Tui(app.modelId, app.cwd);
+  let newTui: TuiApp | null = null;
+
+  if (useTui && process.stdout.isTTY && process.stderr.isTTY) {
+    newTui = new TuiApp(app.modelId, app.cwd);
+    newTui.setMaxTurns(app.maxTurns ?? 24);
+    newTui.start();
+    newTui.setupKeyboard();
+  }
+
   const width = Math.min(process.stdout.columns || 80, 78);
-  tui.print([
+  oldTui.print([
     headerBox(
       'Algorithme AI Agent',
       'Deterministic & Secure Multi-Provider Coding Harness',
@@ -475,20 +517,48 @@ async function interactive(app: App): Promise<void> {
   });
 
   for (;;) {
-    tui.resume();
+    oldTui.resume();
     const line = await ask();
     if (!line) continue;
 
     if (line.startsWith('/')) {
-      tui.finish();
+      oldTui.finish();
       const [cmd, ...rest] = line.split(' ');
       const arg = rest.join(' ').trim();
-      const quit = await handleCommand(app, tui, cmd, arg);
-      if (quit) return;
+      const quit = await handleCommand(app, oldTui, cmd, arg);
+      if (newTui) {
+        newTui.setModel(app.modelId);
+        newTui.render();
+      }
+      if (quit) {
+        newTui?.stop();
+        return;
+      }
       continue;
     }
 
-    await executeTurn(app, tui, line);
+    if (newTui) {
+      newTui.addUserMessage(line);
+      newTui.beginAssistantMessage();
+      try {
+        const result = await app.run(line, {
+          onTextDelta: (delta) => newTui!.onTextDelta(delta),
+          onToolStart: (name, args) => newTui!.onToolStart(name, formatArgs(args)),
+          onToolEnd: (name, resultText, isError) => newTui!.onToolEnd(name, resultText, isError),
+        });
+        newTui.addUsage(result.usage.inputTokens, result.usage.outputTokens);
+        newTui.setTurn(result.turns);
+        newTui.flushStreaming();
+
+        if (!app.streaming) {
+          process.stdout.write(`${result.text}\n`);
+        }
+      } catch (e) {
+        newTui.error(`Error: ${(e as Error).message}`);
+      }
+    } else {
+      await executeTurn(app, oldTui, line);
+    }
   }
 }
 
@@ -512,6 +582,7 @@ async function main(): Promise<void> {
       `Model id like openrouter:deepseek/deepseek-v4 (providers: ${Object.keys(PROVIDER_REGISTRY).join(', ')})`,
       process.env.ALGORITHME_MODEL ?? process.env.PI_MODEL ?? 'openrouter:deepseek/deepseek-v4',
     )
+    .option('--no-tui', 'Disable the modern TUI and use simple console output')
     .option('-c, --cwd <dir>', 'Working directory', process.cwd())
     .option('-s, --system <text>', 'Custom system prompt')
     .option('-t, --temperature <n>', 'Sampling temperature (default 0.0)', (v) => Number(v), undefined)
@@ -522,6 +593,7 @@ async function main(): Promise<void> {
     .showHelpAfterError()
     .action(async (promptParts: string[] | undefined, opts) => {
       const cwd = path.resolve(opts.cwd);
+      const useTui = !opts.noTui;
       const defaultSkills = path.join(cwd, '.algorithme', 'skills');
       const defaultPlugins = path.join(cwd, '.algorithme', 'plugins');
 
@@ -534,16 +606,16 @@ async function main(): Promise<void> {
         maxDepth: opts.maxDepth,
         skillsDirs: opts.skills.length > 0 ? opts.skills : [defaultSkills],
         pluginsDirs: opts.plugins.length > 0 ? opts.plugins : [defaultPlugins],
-        stream: Boolean(process.stdout.isTTY),
+        stream: Boolean(process.stdout.isTTY && useTui),
       });
 
       await app.init();
 
       const prompt = (promptParts ?? []).join(' ');
       if (prompt.trim()) {
-        await singleShot(app, prompt);
+        await singleShot(app, prompt, useTui);
       } else if (process.stdin.isTTY) {
-        await interactive(app);
+        await interactive(app, useTui);
       } else {
         const chunks: Buffer[] = [];
         for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
