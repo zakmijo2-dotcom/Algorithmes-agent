@@ -10,6 +10,7 @@ import { keyStore } from './providers/keys.js';
 import { createDefaultRegistry, type ToolRegistry } from './tools/registry.js';
 import { AgentLoop, type AgentRunResult, type CompactionRunResult, type RunCallbacks } from './agent/loop.js';
 import { createSubagentTool } from './agent/subagent.js';
+import { SessionTree } from './agent/session.js';
 import { loadSkills } from './skills/loader.js';
 import { PluginManager } from './plugins/manager.js';
 import { createSecurityPlugin, SecretManager } from './security/index.js';
@@ -35,6 +36,13 @@ export class App {
   private agent!: AgentLoop;
   private model: string;
   private skillNames: string[] = [];
+  /**
+   * The agent's in-memory session tree. Owned here so that conversation state
+   * (history, lanes, cursor, forks, compaction summaries) survives agent
+   * rebuilds — e.g. switching model/provider via /model. Every AgentLoop is
+   * constructed with this shared tree instead of allocating a fresh one.
+   */
+  private readonly tree = new SessionTree();
 
   constructor(private readonly opts: AppOptions) {
     this.model = opts.model;
@@ -57,7 +65,7 @@ export class App {
   }
 
   get sessionStats(): { messages: number; lanes: number; compactions: number } {
-    const tree = this.agent.sessionTree;
+    const tree = this.tree;
     const compactions = tree
       .path()
       .filter((e) => e.kind === 'compaction' && e.summary !== undefined).length;
@@ -65,7 +73,7 @@ export class App {
   }
 
   sessionHistory(): string[] {
-    return this.agent.sessionTree.path().map((entry) => {
+    return this.tree.path().map((entry) => {
       const id = entry.id.slice(-4);
       if (entry.kind === 'root') return `${chalk.dim('[root]')}`;
       if (entry.kind === 'compaction') {
@@ -82,7 +90,7 @@ export class App {
 
   /** Fork the session tree from the n-th message (1-based) in the current path. */
   forkSession(n: number): string {
-    const tree = this.agent.sessionTree;
+    const tree = this.tree;
     const messages = tree.path().filter((e) => e.kind === 'message');
     const target = messages[n - 1];
     if (!target) throw new Error(`no message #${n} in the current path (${messages.length} message(s))`);
@@ -91,7 +99,7 @@ export class App {
 
   /** Move the session cursor to the entry whose id ends with `suffix`. */
   selectEntry(suffix: string): void {
-    const tree = this.agent.sessionTree;
+    const tree = this.tree;
     const match = tree.leaves.find((id) => id.endsWith(suffix));
     if (!match) {
       throw new Error(`no lane ending in "${suffix}". Use /lanes to list them.`);
@@ -100,7 +108,7 @@ export class App {
   }
 
   laneList(): string[] {
-    const tree = this.agent.sessionTree;
+    const tree = this.tree;
     return tree.leaves.map((id) => {
       const depth = tree.path(id).length - 1;
       const active = id === tree.currentId ? chalk.green('*') : ' ';
@@ -143,7 +151,7 @@ export class App {
   }
 
   clearHistory(): void {
-    this.agent.clearHistory();
+    this.tree.clear();
   }
 
   run(input: string, callbacks: RunCallbacks = {}): Promise<AgentRunResult> {
@@ -161,6 +169,7 @@ export class App {
       temperature: this.opts.temperature,
       cwd: this.opts.cwd,
       secrets: this.secrets,
+      session: this.tree,
     });
   }
 }

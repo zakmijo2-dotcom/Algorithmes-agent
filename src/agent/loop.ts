@@ -25,6 +25,12 @@ export interface AgentOptions {
   secrets?: SecretManager;
   /** Extra absolute directories the agent is allowed to touch (beyond cwd). */
   allowPaths?: string[];
+  /**
+   * Reuse an existing in-memory session tree instead of allocating a new one.
+   * Passing a shared tree lets the conversation (history, lanes, cursor,
+   * forks, compaction summaries) survive provider/model switches.
+   */
+  session?: SessionTree;
 }
 
 export interface TokenUsage {
@@ -127,7 +133,7 @@ export class AgentLoop {
     private readonly tools: ToolRegistry,
     options: AgentOptions = {},
   ) {
-    this.session = new SessionTree(options.contextWindow ?? 48_000);
+    this.session = options.session ?? new SessionTree(options.contextWindow ?? 48_000);
     this.secrets = options.secrets ?? new SecretManager();
     this.options = {
       maxTurns: options.maxTurns ?? 24,
