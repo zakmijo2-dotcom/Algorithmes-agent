@@ -1,15 +1,17 @@
 import 'dotenv/config';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { createInterface } from 'node:readline/promises';
 import chalk from 'chalk';
 import { program } from 'commander';
+import prompts from 'prompts';
 import { createProvider, PROVIDER_REGISTRY } from './providers/factory.js';
 import { createDefaultRegistry, type ToolRegistry } from './tools/registry.js';
-import { AgentLoop, type AgentRunResult, type RunCallbacks } from './agent/loop.js';
+import { AgentLoop, type AgentRunResult, type CompactionRunResult, type RunCallbacks } from './agent/loop.js';
 import { createSubagentTool } from './agent/subagent.js';
 import { loadSkills } from './skills/loader.js';
 import { PluginManager } from './plugins/manager.js';
+import { formatTokens, headerBox, table, truncate } from './ui/format.js';
+import { Tui } from './ui/renderer.js';
 
 export interface AppOptions {
   model: string;
@@ -61,15 +63,15 @@ export class App {
   sessionHistory(): string[] {
     return this.agent.sessionTree.path().map((entry) => {
       const id = entry.id.slice(-4);
-      if (entry.kind === 'root') return chalk.dim(`${id}  [root]`);
+      if (entry.kind === 'root') return `${chalk.dim('[root]')}`;
       if (entry.kind === 'compaction') {
         const label = entry.summary
-          ? `[compaction · ${entry.tokensBefore ?? '?'}t] ${truncate(entry.summary, 70)}`
+          ? `[compaction · ${formatTokens(entry.tokensBefore ?? 0)}t] ${truncate(entry.summary, 60)}`
           : `[branch] ${entry.label ?? ''}`.trim();
-        return chalk.magenta(`${id}  ${label}`);
+        return `${chalk.magenta(label)}`;
       }
       const role = entry.message?.role ?? '?';
-      const content = truncate(entry.message?.content ?? '', 70);
+      const content = truncate(entry.message?.content ?? '', 60);
       return `${id}  ${chalk.cyan(role.padEnd(9))} ${content}`;
     });
   }
@@ -141,6 +143,10 @@ export class App {
     return this.agent.run(input, this.pluginManager, callbacks);
   }
 
+  async compact(): Promise<CompactionRunResult> {
+    return this.agent.compactContext(this.pluginManager);
+  }
+
   private rebuildAgent(): void {
     this.agent = new AgentLoop(createProvider(this.model), this.registry, {
       systemPrompt: this.opts.system,
@@ -152,148 +158,48 @@ export class App {
 }
 
 // ---------------------------------------------------------------------------
-// Terminal UI
+// Slash commands
 // ---------------------------------------------------------------------------
 
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
-class Renderer {
-  private spinner: NodeJS.Timeout | null = null;
-  private streaming = false;
-
-  private get animate(): boolean {
-    return Boolean(process.stderr.isTTY);
-  }
-
-  thinking(label: string): void {
-    if (!this.animate) {
-      process.stderr.write(chalk.dim(`  ⏳ ${label}\n`));
-      return;
-    }
-    let i = 0;
-    this.spinner = setInterval(() => {
-      const frame = SPINNER_FRAMES[i++ % SPINNER_FRAMES.length];
-      process.stderr.write(`\r  ${chalk.cyan(frame)} ${chalk.dim(label)}`);
-    }, 80);
-  }
-
-  private clearSpinner(): void {
-    if (this.spinner) {
-      clearInterval(this.spinner);
-      this.spinner = null;
-      process.stderr.write('\r' + ' '.repeat(72) + '\r');
-    }
-  }
-
-  onDelta(delta: string): void {
-    if (!this.streaming) {
-      this.clearSpinner();
-      this.streaming = true;
-    }
-    process.stdout.write(chalk.cyan(delta));
-  }
-
-  onToolStart(name: string, args: string): void {
-    this.clearSpinner();
-    if (this.streaming) {
-      process.stdout.write('\n');
-      this.streaming = false;
-    }
-    process.stderr.write(`  ${chalk.cyan('⚡')} ${chalk.bold(name)}(${chalk.dim(args)})\n`);
-  }
-
-  onToolEnd(name: string, result: string): void {
-    process.stderr.write(`  ${chalk.green('✓')} ${chalk.dim(name)} → ${chalk.dim(result)}\n`);
-  }
-
-  finish(): void {
-    this.clearSpinner();
-    if (this.streaming) {
-      process.stdout.write('\n');
-      this.streaming = false;
-    }
-  }
-}
-
-function truncate(value: string, max: number): string {
-  if (value.length <= max) return value;
-  return `${value.slice(0, max - 3)}...`;
-}
-
-function formatArgs(args: any): string {
-  return truncate(JSON.stringify(args ?? {}), 140);
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-  return String(n);
-}
-
-function collect(value: string, previous: string[]): string[] {
-  return previous.concat(value.split(',').filter(Boolean));
-}
-
-async function executeTurn(app: App, input: string): Promise<AgentRunResult | undefined> {
-  const render = new Renderer();
-  render.thinking('thinking');
-  try {
-    const result = await app.run(input, {
-      onTextDelta: (delta) => render.onDelta(delta),
-      onToolStart: (name, args) => render.onToolStart(name, formatArgs(args)),
-      onToolEnd: (name, resultText) => render.onToolEnd(name, truncate(resultText, 160)),
-    });
-    render.finish();
-
-    if (!app.streaming) {
-      process.stdout.write(`${result.text}\n`);
-    }
-
-    const seconds = (result.durationMs / 1000).toFixed(1);
-    const tokens = `${formatTokens(result.usage.inputTokens)}→${formatTokens(result.usage.outputTokens)}`;
-    const compactions = result.compactions > 0 ? ` · ${result.compactions} compacted` : '';
-    process.stderr.write(
-      chalk.dim(
-        `  ⏱ ${seconds}s · ${result.turns} turn${result.turns === 1 ? '' : 's'} · ` +
-          `${result.toolCalls} tool call${result.toolCalls === 1 ? '' : 's'} · tokens ${tokens}${compactions}\n`,
-      ),
-    );
-    return result;
-  } catch (e) {
-    render.finish();
-    process.stderr.write(chalk.red(`  Error: ${(e as Error).message}\n`));
-    return undefined;
-  }
-}
-
-async function singleShot(app: App, prompt: string): Promise<void> {
-  const result = await executeTurn(app, prompt);
-  if (result === undefined) process.exitCode = 1;
-}
+const COMMANDS: Array<{ cmd: string; help: string }> = [
+  { cmd: '/help', help: 'Show this help' },
+  { cmd: '/model <id>', help: 'Switch provider/model' },
+  { cmd: '/status', help: 'Show model, cwd, tools, skills, session' },
+  { cmd: '/skills', help: 'List loaded skills' },
+  { cmd: '/history', help: 'Show the current conversation path' },
+  { cmd: '/fork <n>', help: 'Branch off from message #n in the path' },
+  { cmd: '/lanes', help: 'List branch leaves' },
+  { cmd: '/go <suffix>', help: 'Switch the cursor to a lane' },
+  { cmd: '/compact', help: 'Summarize old history now' },
+  { cmd: '/clear', help: 'Reset conversation history' },
+  { cmd: '/exit', help: 'Leave the agent' },
+];
 
 function printHelp(): void {
-  console.log(chalk.bold('Commands:'));
-  console.log('  /model <id>     switch model (e.g. groq:llama-3.3-70b-versatile, ollama:llama3)');
-  console.log('  /clear          reset conversation history');
-  console.log('  /status         show model, cwd, tools, skills, plugins, session');
-  console.log('  /history        show the current conversation path');
-  console.log('  /fork <n>       branch off from message #n in the current path');
-  console.log('  /lanes          list branch leaves; /go <suffix> to switch to one');
-  console.log('  /skills         list loaded skills');
-  console.log('  /exit, /quit    leave the agent');
-  console.log('  /help           this help');
+  console.log(
+    table({
+      headers: ['Command', 'Description'],
+      rows: COMMANDS.map((c) => [c.cmd, c.help]),
+    }),
+  );
 }
 
 function printStatus(app: App): void {
-  console.log(chalk.bold(`model:      ${chalk.cyan(app.modelId)}`));
-  console.log(chalk.bold(`cwd:        ${chalk.cyan(app.cwd)}`));
-  console.log(chalk.bold(`tools:      ${chalk.cyan(app.registry.names().join(', '))}`));
-  console.log(chalk.bold(`skills:     ${chalk.cyan(app.skills.join(', ') || 'none')}`));
-  const plugins = app.pluginManager.names;
-  if (plugins.length) console.log(chalk.bold(`plugins:    ${chalk.cyan(plugins.join(', '))}`));
   const stats = app.sessionStats;
-  console.log(chalk.bold(`session:    ${chalk.cyan(`${stats.messages} messages`)} · ` +
-    `${stats.lanes} lane${stats.lanes === 1 ? '' : 's'} · ` +
-    `${stats.compactions} compaction${stats.compactions === 1 ? '' : 's'}`));
+  const rows: string[][] = [
+    ['model', app.modelId],
+    ['cwd', app.cwd],
+    ['tools', app.registry.names().join(', ')],
+    ['skills', app.skills.join(', ') || 'none'],
+  ];
+  const plugins = app.pluginManager.names;
+  if (plugins.length) rows.push(['plugins', plugins.join(', ')]);
+  rows.push([
+    'session',
+    `${stats.messages} messages · ${stats.lanes} lane${stats.lanes === 1 ? '' : 's'} · ` +
+      `${stats.compactions} compaction${stats.compactions === 1 ? '' : 's'}`,
+  ]);
+  console.log(table({ headers: ['Key', 'Value'], rows }));
 }
 
 function printSkills(app: App): void {
@@ -301,102 +207,232 @@ function printSkills(app: App): void {
     console.log(chalk.dim('no skills loaded (look in .pi/skills)'));
     return;
   }
-  console.log(chalk.bold(`Loaded skills (${app.skills.length}):`));
-  for (const skill of app.skills) console.log(`  - ${chalk.cyan(skill)}`);
+  console.log(table({ headers: ['Skill'], rows: app.skills.map((s) => [s]) }));
+}
+
+function printHistory(app: App): void {
+  const lines = app.sessionHistory();
+  if (lines.length === 0) {
+    console.log(chalk.dim('no history yet'));
+    return;
+  }
+  console.log(table({ headers: ['Entry'], rows: lines.map((l) => [l]) }));
+}
+
+async function compactNow(app: App, tui: Tui): Promise<void> {
+  tui.resume();
+  tui.beginCompacting();
+  try {
+    const cr = await app.compact();
+    tui.finish();
+    if (!cr.performed) {
+      console.log(chalk.dim('nothing to compact — history is still short'));
+      return;
+    }
+    console.log(
+      chalk.green(`compacted ${cr.summarizedMessages} message(s) · ~${formatTokens(cr.tokensBefore)} tokens before`),
+    );
+    console.log(chalk.dim(cr.summary));
+  } catch (e) {
+    tui.finish();
+    console.error(chalk.red(`Error: ${(e as Error).message}`));
+  }
+}
+
+async function handleCommand(app: App, tui: Tui, cmd: string, arg: string): Promise<boolean> {
+  switch (cmd) {
+    case '/exit':
+    case '/quit':
+      return true;
+    case '/help':
+      printHelp();
+      break;
+    case '/status':
+      printStatus(app);
+      break;
+    case '/skills':
+      printSkills(app);
+      break;
+    case '/history':
+      printHistory(app);
+      break;
+    case '/clear':
+      app.clearHistory();
+      console.log(chalk.dim('history cleared'));
+      break;
+    case '/model': {
+      if (!arg) {
+        console.log(chalk.dim(`current model: ${app.modelId}`));
+      } else {
+        try {
+          app.setModel(arg);
+          tui.setModel(arg);
+          console.log(chalk.green(`model → ${arg}`));
+        } catch (e) {
+          console.error(chalk.red(`Error: ${(e as Error).message}`));
+        }
+      }
+      break;
+    }
+    case '/fork': {
+      const n = Number(arg);
+      if (!Number.isInteger(n) || n < 1) {
+        console.log(chalk.dim('usage: /fork <n>  (n = 1-based message index, see /history)'));
+        break;
+      }
+      try {
+        const id = app.forkSession(n);
+        console.log(chalk.green(`forked from message #${n} → new branch ${chalk.cyan(id.slice(-4))}`));
+      } catch (e) {
+        console.error(chalk.red(`Error: ${(e as Error).message}`));
+      }
+      break;
+    }
+    case '/lanes': {
+      const lanes = app.laneList();
+      if (lanes.length === 0) console.log(chalk.dim('no lanes'));
+      else console.log(lanes.join('\n'));
+      break;
+    }
+    case '/go': {
+      if (!arg) {
+        console.log(chalk.dim('usage: /go <suffix>  (e.g. /go e12a, see /lanes)'));
+        break;
+      }
+      try {
+        app.selectEntry(arg.replace(/^e/, ''));
+        console.log(chalk.green(`switched to lane ${chalk.cyan(`e${arg.replace(/^e/, '')}`)}`));
+      } catch (e) {
+        console.error(chalk.red(`Error: ${(e as Error).message}`));
+      }
+      break;
+    }
+    case '/compact':
+      await compactNow(app, tui);
+      break;
+    default:
+      console.log(chalk.dim(`unknown command: ${cmd} (try /help)`));
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Run helpers
+// ---------------------------------------------------------------------------
+
+function formatArgs(args: any): string {
+  return truncate(JSON.stringify(args ?? {}), 120);
+}
+
+async function executeTurn(app: App, tui: Tui, input: string): Promise<AgentRunResult | undefined> {
+  tui.resume();
+  tui.beginThinking();
+  try {
+    const result = await app.run(input, {
+      onTextDelta: (delta) => tui.onDelta(delta),
+      onToolStart: (name, args) => tui.onToolStart(name, formatArgs(args)),
+      onToolEnd: (name, resultText, isError) => tui.onToolEnd(name, resultText, isError),
+    });
+    tui.addUsage(result.usage.inputTokens, result.usage.outputTokens);
+
+    // In non-streaming mode (pipes, non-TTY) the final answer is printed here.
+    if (!app.streaming) {
+      process.stdout.write(`${result.text}\n`);
+    }
+
+    const seconds = (result.durationMs / 1000).toFixed(1);
+    const tokens = `${formatTokens(result.usage.inputTokens)}→${formatTokens(result.usage.outputTokens)}`;
+    const compactions = result.compactions > 0 ? ` · ${result.compactions} compacted` : '';
+    tui.emitLine(
+      chalk.dim(
+        `⏱ ${seconds}s · ${result.turns} turn${result.turns === 1 ? '' : 's'} · ` +
+          `${result.toolCalls} tool call${result.toolCalls === 1 ? '' : 's'} · tokens ${tokens}${compactions}`,
+      ),
+    );
+    return result;
+  } catch (e) {
+    tui.error(`Error: ${(e as Error).message}`);
+    return undefined;
+  } finally {
+    tui.finish();
+  }
+}
+
+async function singleShot(app: App, prompt: string): Promise<void> {
+  const tui = new Tui(app.modelId, app.cwd);
+  const result = await executeTurn(app, tui, prompt);
+  if (result === undefined) process.exitCode = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Interactive REPL
+// ---------------------------------------------------------------------------
+
+async function ask(): Promise<string> {
+  const response = await prompts<'value'>({
+    type: 'autocomplete',
+    name: 'value',
+    message: 'pi',
+    choices: COMMANDS.map((c) => ({ title: c.cmd, description: c.help })),
+    // The raw typed input is always the first suggestion so Enter submits
+    // exactly what was typed; command matches are offered as completions.
+    suggest: async (input, choices) => {
+      const text = String(input ?? '').trim();
+      if (!text) return [];
+      if (text.startsWith('/')) {
+        const [name] = text.split(' ');
+        const matches = choices.filter(
+          (c) =>
+            c.title === name ||
+            (c.title.startsWith(name) && text.length <= c.title.length) ||
+            (c.description ?? '').toLowerCase().includes(text.toLowerCase()),
+        );
+        return [{ title: text, value: text }, ...matches];
+      }
+      return [{ title: `send: ${truncate(text, 40)}`, value: text }];
+    },
+  }, { onCancel: () => process.exit(0) });
+  return typeof response?.value === 'string' ? response.value.trim() : '';
 }
 
 async function interactive(app: App): Promise<void> {
-  console.log(chalk.bold(chalk.cyan('π ') + 'pi-agent — deterministic coding agent'));
-  console.log(chalk.dim(`  model: ${app.modelId} · cwd: ${app.cwd} · skills: ${app.skills.length}`));
-  console.log(chalk.dim('  /help for commands · /exit to quit'));
+  const tui = new Tui(app.modelId, app.cwd);
+  const width = Math.min(process.stdout.columns || 80, 78);
+  tui.print([
+    headerBox(
+      app.modelId,
+      `${app.cwd} · ${app.skills.length} skill${app.skills.length === 1 ? '' : 's'} · /help for commands`,
+      width,
+    ),
+    '',
+  ]);
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  rl.on('SIGINT', () => {
-    process.stdout.write('\n');
+  process.on('SIGINT', () => {
+    process.stderr.write('\n');
     process.exit(0);
   });
 
   for (;;) {
-    process.stdout.write(chalk.green('pi> '));
-    const line = (await rl.question('').catch(() => '')).trim();
+    tui.resume();
+    const line = await ask();
     if (!line) continue;
 
     if (line.startsWith('/')) {
+      tui.finish();
       const [cmd, ...rest] = line.split(' ');
       const arg = rest.join(' ').trim();
-      switch (cmd) {
-        case '/exit':
-        case '/quit':
-          rl.close();
-          return;
-        case '/clear':
-          app.clearHistory();
-          console.log(chalk.dim('history cleared'));
-          break;
-        case '/model':
-          if (!arg) {
-            console.log(chalk.dim(`current model: ${app.modelId}`));
-          } else {
-            try {
-              app.setModel(arg);
-              console.log(chalk.green(`model → ${arg}`));
-            } catch (e) {
-              console.error(chalk.red(`Error: ${(e as Error).message}`));
-            }
-          }
-          break;
-        case '/status':
-          printStatus(app);
-          break;
-        case '/skills':
-          printSkills(app);
-          break;
-        case '/history':
-          for (const line of app.sessionHistory()) console.log(line);
-          break;
-        case '/fork': {
-          const n = Number(arg);
-          if (!Number.isInteger(n) || n < 1) {
-            console.log(chalk.dim('usage: /fork <n>  (n = 1-based message index, see /history)'));
-            break;
-          }
-          try {
-            const id = app.forkSession(n);
-            console.log(chalk.green(`forked from message #${n} → new branch ${chalk.cyan(id.slice(-4))}`));
-          } catch (e) {
-            console.error(chalk.red(`Error: ${(e as Error).message}`));
-          }
-          break;
-        }
-        case '/lanes':
-          if (app.laneList().length === 0) console.log(chalk.dim('no lanes'));
-          for (const lane of app.laneList()) console.log(lane);
-          break;
-        case '/go': {
-          if (!arg) {
-            console.log(chalk.dim('usage: /go <suffix>  (e.g. /go e12a, see /lanes)'));
-            break;
-          }
-          try {
-            app.selectEntry(arg.replace(/^e/, ''));
-            console.log(chalk.green(`switched to lane ${chalk.cyan(`e${arg.replace(/^e/, '')}`)}`));
-          } catch (e) {
-            console.error(chalk.red(`Error: ${(e as Error).message}`));
-          }
-          break;
-        }
-        case '/help':
-          printHelp();
-          break;
-        default:
-          console.log(chalk.dim(`unknown command: ${cmd} (try /help)`));
-      }
+      const quit = await handleCommand(app, tui, cmd, arg);
+      if (quit) return;
       continue;
     }
 
-    await executeTurn(app, line);
+    await executeTurn(app, tui, line);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
   const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8')) as {
@@ -458,6 +494,10 @@ async function main(): Promise<void> {
     });
 
   await program.parseAsync(process.argv);
+}
+
+function collect(value: string, previous: string[]): string[] {
+  return previous.concat(value.split(',').filter(Boolean));
 }
 
 main().catch((e) => {

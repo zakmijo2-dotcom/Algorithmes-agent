@@ -42,14 +42,22 @@ export interface RunCallbacks {
   onTextDelta?: (delta: string) => void;
   /** Fired before a tool executes. */
   onToolStart?: (name: string, args: any) => void;
-  /** Fired after a tool executes successfully. */
-  onToolEnd?: (name: string, result: string) => void;
+  /** Fired after a tool executes. `isError` marks failed/blocked executions. */
+  onToolEnd?: (name: string, result: string, isError?: boolean) => void;
 }
 
 export interface ToolCallRequest {
   id: string;
   name: string;
   arguments: string;
+}
+
+/** Result of running context compaction (manual or automatic). */
+export interface CompactionRunResult {
+  performed: boolean;
+  summarizedMessages: number;
+  tokensBefore: number;
+  summary: string;
 }
 
 const DEFAULT_SYSTEM_PROMPT = `You are pi, a minimalist, deterministic coding agent running in a terminal.
@@ -178,7 +186,8 @@ export class AgentLoop {
       });
 
       if (this.session.needsCompaction(this.compaction)) {
-        compactions += await this.compactContext(plugins);
+        const cr = await this.compactContext(plugins);
+        if (cr.performed) compactions++;
       }
 
       const messages = this.buildMessages();
@@ -229,9 +238,11 @@ export class AgentLoop {
   }
 
   /** Generate a summary via the provider and apply it as a compaction entry. */
-  private async compactContext(plugins?: PluginManager): Promise<number> {
+  async compactContext(plugins?: PluginManager): Promise<CompactionRunResult> {
     const preparation = this.session.prepareCompaction(this.compaction);
-    if (!preparation) return 0;
+    if (!preparation) {
+      return { performed: false, summarizedMessages: 0, tokensBefore: 0, summary: '' };
+    }
 
     const request = preparation.previousSummary
       ? [
@@ -254,7 +265,12 @@ export class AgentLoop {
       tokensBefore: preparation.tokensBefore,
       summary,
     });
-    return 1;
+    return {
+      performed: true,
+      summarizedMessages: preparation.messagesToSummarize.length,
+      tokensBefore: preparation.tokensBefore,
+      summary,
+    };
   }
 
   private async streamTurn(
@@ -339,7 +355,7 @@ export class AgentLoop {
         const blocked = await plugins?.runBeforeToolCall(hookCtx);
         if (blocked) {
           const text = `Error: tool execution blocked${blocked.reason ? `: ${blocked.reason}` : '.'}`;
-          callbacks.onToolEnd?.(call.name, text);
+          callbacks.onToolEnd?.(call.name, text, true);
           return { callId: call.id, content: text };
         }
 
@@ -352,7 +368,7 @@ export class AgentLoop {
           isError = true;
           result = e instanceof Error ? `Error (${call.name}): ${e.message}` : String(e);
         }
-        callbacks.onToolEnd?.(call.name, result);
+        callbacks.onToolEnd?.(call.name, result, isError);
 
         const override = await plugins?.runAfterToolCall({
           ...hookCtx,
