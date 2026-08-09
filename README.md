@@ -34,7 +34,20 @@ architecture — hardened with a built-in security & guardrails layer.
 
 ## Quick start
 
-### 1. Install
+### 1. Install (global)
+
+```bash
+# From a local clone
+npm install
+npm run build
+npm install -g .
+
+# Verifies the bin links
+algorithme --help
+alg --help
+```
+
+### 1b. Install (local dev)
 
 ```bash
 npm install
@@ -120,6 +133,17 @@ Usage: algorithme [options] [prompt...]
 | `--plugins <paths...>` | Plugin directories (comma or space separated). | `.algorithme/plugins` |
 
 ### Interactive commands
+
+Quick reference for the most-used slash commands:
+
+| Command | Shortcut |
+| --- | --- |
+| `/clear` | Reset the conversation history |
+| `/fork <n>` | Branch off from message #n (1-based, see `/history`) |
+| `/lanes` | List branch leaves; `*` marks the active one |
+| `/key <provider> [value]` | Manage stored API keys |
+
+Full command table:
 
 | Command | Description |
 | --- | --- |
@@ -321,7 +345,27 @@ main agent ── subagent("research error handling in src/")
 algorithme "Refactor the providers directory and write a short report on the changes."
 ```
 
-### Provider layer
+### Testing
+
+The project ships with a comprehensive [Vitest](https://vitest.dev) test suite covering
+security, session management, and provider infrastructure:
+
+```bash
+npm test              # run all tests (98 tests across 3 files)
+npm run test:watch    # watch mode
+```
+
+| File | Coverage |
+| --- | --- |
+| `tests/security.test.ts` | Path sandboxing (traversal + symlink), command injection blocking, secret masking (env vars, API keys, Bearer tokens, GitHub PATs, AWS keys, Slack tokens, private keys), security plugin hooks |
+| `tests/session.test.ts` | SessionTree DAG (append, fork, select, clear), build/reconstruct with compaction summaries, compaction lifecycle (prepare + apply), context window thresholds, independent lanes |
+| `tests/providers.test.ts` | Model ID parsing, provider factory resolution (openai/anthropic/gemini/azure/sdk kinds), OpenAI-compatible provider payload formatting, SDK-only provider rejection |
+
+### Session tree persistence
+
+The `App` class owns a shared `SessionTree` that is passed into every `AgentLoop`
+instance. This means conversation history, lanes, forks, and compaction summaries
+**survive model/provider switches** — switching models with `/model` does not wipe context.
 
 Every provider implements `BaseProvider.chat(messages, tools)` as an async iterator of
 `text | tool | usage | end | error` events. Most catalog providers are OpenAI-compatible,
@@ -440,6 +484,7 @@ root ── user "fix the bug"
 ```bash
 npm run typecheck   # tsc --noEmit
 npm run build       # compile to dist/
+npm test            # run vitest suite
 npm run dev -- "..."  # run from source via tsx
 ```
 

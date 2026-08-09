@@ -5,8 +5,8 @@
   "type": "module",
   "license": "MIT",
   "bin": {
-    "algorithme": "dist/index.js",
-    "alg": "dist/index.js"
+    "alg": "./dist/index.js",
+    "algorithme": "./dist/index.js"
   },
   "repository": {
     "type": "git",
