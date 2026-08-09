@@ -28,7 +28,21 @@ architecture — hardened with a built-in security & guardrails layer.
 - **Plugins** — lifecycle hooks (`onAgentStart`, `onTurnStart`, `beforeToolCall`, `afterToolCall`, `onCompaction`, `onTurnEnd`) loaded from `.algorithme/plugins`, with blockable tool calls and result mutation.
 - **Session tree** — history is a branching tree, not a flat buffer: fork from any message (`/fork`), list lanes (`/lanes`), switch between branches (`/go`).
 - **Termux ready** — runs natively on Android's Termux; shell detection adapts automatically.
-- **Polished CLI UI** — live token streaming, spinner, tool-call tracing, per-turn timing and token accounting.
+- **OpenCode Native Integration** — drop `.opencode/` into your project to bring Algorithme's security guardrails, secret masking, and custom tools directly into the OpenCode TUI/CLI interface.
+
+---
+
+## OpenCode Integration
+
+To run Algorithme AI Agent features natively inside OpenCode:
+
+```bash
+# Copy OpenCode plugins, tools, and agents into your project
+cp -r .opencode ./
+
+# Launch OpenCode with the Algorithme Coder agent
+opencode --agent algorithme-coder
+```
 
 ---
 

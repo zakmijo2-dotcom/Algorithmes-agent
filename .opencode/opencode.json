@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/schema.json",
+  "name": "opencode-algorithme-agent",
+  "description": "OpenCode configuration carrying over Algorithme AI Agent security guardrails, custom tools, and multi-agent setup.",
+  "plugins": [
+    "./plugins/security-guardrails.ts",
+    "./plugins/secret-masker.ts"
+  ],
+  "tools": [
+    "./tools/safe_bash.ts",
+    "./tools/diff_apply.ts",
+    "./tools/file_edit.ts"
+  ],
+  "agents": {
+    "coder": "./agents/algorithme-coder.md",
+    "auditor": "./agents/algorithme-auditor.md"
+  },
+  "defaultAgent": "coder"
+}
